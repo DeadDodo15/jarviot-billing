@@ -567,7 +567,7 @@ function InvForm({ inv: initial, onSave, onCancel, allInvoices }) {
       <div><label className="label">Due Date (+15 days)</label><input className="inp" type="date" value={inv.dueDate} readOnly /></div>
     </div>
 
-    <div style={{background:"#fff",borderRadius:10,border:"1px solid #E2E8F0",overflow:"hidden",marginBottom:16}}>
+    <div style={{background:"#fff",borderRadius:10,border:"1px solid #E2E8F0",overflow:"visible",marginBottom:16}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
         <thead><tr style={{background:P}}>
           <th style={{padding:"10px 8px",color:"#fff",fontSize:11,fontWeight:600,width:36}}>#</th>
