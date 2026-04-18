@@ -472,6 +472,56 @@ function RecurringView({ data, goPreview, goEdit }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   ITEM AUTOCOMPLETE
+   ═══════════════════════════════════════════════════════════════ */
+function ItemAutocomplete({ value, suggestions, onChange, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(-1);
+  const ref = useRef(null);
+
+  const filtered = value.trim()
+    ? suggestions.filter(s => s.description.toLowerCase().includes(value.toLowerCase()))
+    : suggestions;
+
+  useEffect(() => {
+    const handleClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const handleKey = (e) => {
+    if (!open || filtered.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setHighlighted(h => Math.min(h + 1, filtered.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter" && highlighted >= 0) { e.preventDefault(); onSelect(filtered[highlighted]); setOpen(false); setHighlighted(-1); }
+    else if (e.key === "Escape") { setOpen(false); }
+  };
+
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      <input className="inp" placeholder="e.g. AWS - Servers" value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); setHighlighted(-1); }}
+        onFocus={() => { if (suggestions.length > 0) setOpen(true); }}
+        onKeyDown={handleKey} />
+      {open && filtered.length > 0 && (
+        <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:"#fff",border:"1px solid #E2E8F0",borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,0.12)",maxHeight:200,overflowY:"auto",marginTop:2}}>
+          {filtered.map((s, i) => (
+            <div key={s.description} onMouseDown={() => { onSelect(s); setOpen(false); }}
+              onMouseEnter={() => setHighlighted(i)}
+              style={{padding:"8px 12px",fontSize:13,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",
+                background: i === highlighted ? PL : "#fff",
+                borderBottom: i < filtered.length - 1 ? "1px solid #F1F5F9" : "none"}}>
+              <span style={{fontWeight:500}}>{s.description}</span>
+              <span style={{fontSize:11,color:"#94A3B8",whiteSpace:"nowrap",marginLeft:12}}>₹{fmt(s.rate)} · {s.gst}%</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
    INVOICE FORM
    ═══════════════════════════════════════════════════════════════ */
 function InvForm({ inv: initial, onSave, onCancel, allInvoices }) {
@@ -479,8 +529,18 @@ function InvForm({ inv: initial, onSave, onCancel, allInvoices }) {
   const [recOn, setRecOn] = useState(!!initial.recurring?.active);
   const [recFreq, setRecFreq] = useState(initial.recurring?.frequency || "monthly");
 
+  // Build unique past items (deduplicated by description, latest wins)
+  const pastItems = (() => {
+    const map = new Map();
+    allInvoices.forEach(inv => inv.items?.forEach(it => {
+      if (it.description?.trim()) map.set(it.description.trim().toLowerCase(), { description: it.description.trim(), hsn: it.hsn || "", gst: it.gst ?? 18, rate: it.rate || "" });
+    }));
+    return Array.from(map.values());
+  })();
+
   const update = (f, v) => setInv(prev => { const n = { ...prev, [f]: v }; if (f === "invoiceDate") n.dueDate = addDays(v, 15); return n; });
   const updateItem = (id, f, v) => setInv(prev => ({ ...prev, items: prev.items.map(it => it.id===id ? {...it, [f]:v} : it) }));
+  const autofillItem = (id, past) => setInv(prev => ({ ...prev, items: prev.items.map(it => it.id===id ? {...it, description: past.description, hsn: past.hsn, gst: past.gst, rate: past.rate } : it) }));
   const addItem = () => setInv(prev => ({ ...prev, items: [...prev.items, emptyItem()] }));
   const removeItem = (id) => setInv(prev => ({ ...prev, items: prev.items.length > 1 ? prev.items.filter(i => i.id!==id) : prev.items }));
 
@@ -522,7 +582,7 @@ function InvForm({ inv: initial, onSave, onCancel, allInvoices }) {
         <tbody>{inv.items.map((it,i) => (
           <tr key={it.id} style={{borderBottom:"1px solid #F1F5F9"}}>
             <td style={{padding:"8px",textAlign:"center",color:"#94A3B8"}}>{i+1}</td>
-            <td style={{padding:"6px 8px"}}><input className="inp" placeholder="e.g. AWS - Servers" value={it.description} onChange={e => updateItem(it.id,"description",e.target.value)} /></td>
+            <td style={{padding:"6px 8px"}}><ItemAutocomplete value={it.description} suggestions={pastItems} onChange={v => updateItem(it.id,"description",v)} onSelect={past => autofillItem(it.id, past)} /></td>
             <td style={{padding:"6px 4px"}}><input className="inp" placeholder="—" value={it.hsn} onChange={e => updateItem(it.id,"hsn",e.target.value)} /></td>
             <td style={{padding:"6px 4px"}}><input className="inp" type="number" value={it.gst} onChange={e => updateItem(it.id,"gst",e.target.value)} style={{textAlign:"center"}} /></td>
             <td style={{padding:"6px 4px"}}><input className="inp" type="number" value={it.qty} onChange={e => updateItem(it.id,"qty",e.target.value)} style={{textAlign:"center"}} /></td>
