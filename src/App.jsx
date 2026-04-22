@@ -722,9 +722,11 @@ function TodoDashboard({ todos }) {
    ═══════════════════════════════════════════════════════════════ */
 function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
   const [form, setForm] = useState(emptyTask());
+  const [editingId, setEditingId] = useState(null);
   const [filter, setFilter] = useState("open");
   const [tickerFilter, setTickerFilter] = useState("");
   const [kindFilter, setKindFilter] = useState("");
+  const formRef = useRef(null);
 
   const kinds = Array.from(new Set(tasks.map(t => (t.kind || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
@@ -740,10 +742,19 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
       return (b.createdAt || "").localeCompare(a.createdAt || "");
     });
 
-  const handleCreate = () => {
+  const startEdit = (t) => {
+    setEditingId(t.id);
+    setForm({ ...t });
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const cancelEdit = () => { setEditingId(null); setForm(emptyTask()); };
+
+  const handleSave = () => {
     if (!form.ticker.trim()) { alert("Ticker is required. Use - for non-company items."); return; }
     if (!form.text.trim()) { alert("Task text is required."); return; }
     onSaveTask({ ...form, ticker: form.ticker.trim().toUpperCase(), text: form.text.trim(), kind: form.kind.trim(), notes: form.notes.trim() });
+    setEditingId(null);
     setForm(emptyTask());
   };
 
@@ -753,7 +764,8 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
     <div className="page-title">Tasks</div>
     <div className="page-sub">Required: ticker. Optional: kind, due date, notes.</div>
 
-    <div className="card" style={{marginBottom:16}}>
+    <div ref={formRef} className="card" style={{marginBottom:16,border: editingId ? `2px solid ${P}` : "1px solid #E2E8F0"}}>
+      {editingId && <div style={{fontSize:12,fontWeight:600,color:P,marginBottom:10}}>✎ Editing task — make changes below then click Update</div>}
       <div className="todo-form-grid tasks">
         <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
         <input className="inp" placeholder="Task text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
@@ -761,7 +773,10 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
         <input className="inp" type="date" value={form.dueDate} onChange={e => setForm(prev => ({ ...prev, dueDate: e.target.value }))} />
       </div>
       <textarea className="inp" rows={2} placeholder="Optional notes" value={form.notes} onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))} style={{resize:"vertical",marginBottom:10}} />
-      <button className="btn btn-p" onClick={handleCreate}>Add Task</button>
+      <div style={{display:"flex",gap:8}}>
+        <button className="btn btn-p" onClick={handleSave}>{editingId ? "Update Task" : "Add Task"}</button>
+        {editingId && <button className="btn btn-o" onClick={cancelEdit}>Cancel</button>}
+      </div>
     </div>
 
     <div className="todo-actions" style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
@@ -787,6 +802,7 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
             <td style={{color:overdue ? "#DC2626" : "inherit",fontWeight:overdue ? 700 : 500}}>{t.dueDate ? fmtDate(t.dueDate) : "-"}</td>
             <td><span className={`badge ${t.status === "completed" ? "badge-paid" : "badge-finalized"}`}>{t.status}</span></td>
             <td style={{whiteSpace:"nowrap"}}>
+              <button className="btn btn-s" style={{marginRight:6}} onClick={() => startEdit(t)}>Edit</button>
               <button className="btn btn-s" style={{marginRight:6}} onClick={() => onToggleTask(t.id)}>{t.status === "completed" ? "Reopen" : "Done"}</button>
               <button className="btn btn-d" onClick={() => { if (confirm("Delete this task?")) onDeleteTask(t.id); }}>✕</button>
             </td>
@@ -802,8 +818,10 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
    ═══════════════════════════════════════════════════════════════ */
 function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDeleteQuestion }) {
   const [form, setForm] = useState(emptyQuestion());
+  const [editingId, setEditingId] = useState(null);
   const [statusFilter, setStatusFilter] = useState("open");
   const [search, setSearch] = useState("");
+  const formRef = useRef(null);
 
   const filtered = [...questions]
     .filter(q => statusFilter === "all" ? true : q.status === statusFilter)
@@ -816,10 +834,19 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
     })
     .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 
-  const handleCreate = () => {
+  const startEdit = (q) => {
+    setEditingId(q.id);
+    setForm({ ...q });
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const cancelEdit = () => { setEditingId(null); setForm(emptyQuestion()); };
+
+  const handleSave = () => {
     if (!form.ticker.trim()) { alert("Ticker is required. Use - for non-company items."); return; }
     if (!form.text.trim()) { alert("Question text is required."); return; }
     onSaveQuestion({ ...form, ticker: form.ticker.trim().toUpperCase(), text: form.text.trim(), kind: form.kind.trim() });
+    setEditingId(null);
     setForm(emptyQuestion());
   };
 
@@ -827,7 +854,8 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
     <div className="page-title">Questions</div>
     <div className="page-sub">Capture unknowns quickly. Status can be open, resolved, or stale.</div>
 
-    <div className="card" style={{marginBottom:16}}>
+    <div ref={formRef} className="card" style={{marginBottom:16,border: editingId ? `2px solid ${P}` : "1px solid #E2E8F0"}}>
+      {editingId && <div style={{fontSize:12,fontWeight:600,color:P,marginBottom:10}}>✎ Editing question — make changes below then click Update</div>}
       <div className="todo-form-grid questions">
         <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
         <input className="inp" placeholder="Question text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
@@ -839,7 +867,10 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
           <option value="stale">stale</option>
         </select>
       </div>
-      <button className="btn btn-p" onClick={handleCreate}>Add Question</button>
+      <div style={{display:"flex",gap:8}}>
+        <button className="btn btn-p" onClick={handleSave}>{editingId ? "Update Question" : "Add Question"}</button>
+        {editingId && <button className="btn btn-o" onClick={cancelEdit}>Cancel</button>}
+      </div>
     </div>
 
     <div className="todo-actions" style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
@@ -856,6 +887,7 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
           <td>{q.dueDate ? fmtDate(q.dueDate) : "-"}</td>
           <td><span className={`badge ${q.status === "resolved" ? "badge-paid" : q.status === "stale" ? "badge-draft" : "badge-finalized"}`}>{q.status}</span></td>
           <td style={{whiteSpace:"nowrap"}}>
+            <button className="btn btn-s" style={{marginRight:6}} onClick={() => startEdit(q)}>Edit</button>
             <select className="inp" style={{display:"inline-block",width:110,marginRight:6,padding:"6px 8px"}} value={q.status} onChange={e => onSetQuestionStatus(q.id, e.target.value)}>
               <option value="open">open</option>
               <option value="resolved">resolved</option>
