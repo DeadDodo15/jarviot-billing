@@ -86,6 +86,7 @@ function emptyTask() {
     ticker: "",
     text: "",
     kind: "",
+    industry: "",
     dueDate: "",
     notes: "",
     status: "open",
@@ -101,6 +102,7 @@ function emptyQuestion() {
     ticker: "",
     text: "",
     kind: "",
+    industry: "",
     dueDate: "",
     status: "open",
     createdAt: new Date().toISOString(),
@@ -115,6 +117,7 @@ function normalizeTask(t) {
     ticker: t?.ticker || "",
     text: t?.text || "",
     kind: t?.kind || "",
+    industry: t?.industry || "",
     dueDate: t?.dueDate || "",
     notes: t?.notes || "",
     status: t?.status === "completed" ? "completed" : "open",
@@ -137,6 +140,7 @@ function normalizeQuestion(q) {
     ticker: q?.ticker || "",
     text: q?.text || "",
     kind: q?.kind || "",
+    industry: q?.industry || "",
     dueDate: q?.dueDate || "",
     status,
     createdAt: q?.createdAt || new Date().toISOString(),
@@ -325,8 +329,8 @@ html,body,#root{height:100%}
 .sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:199}
 .todo-split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .todo-form-grid{display:grid;gap:10px;margin-bottom:10px}
-.todo-form-grid.tasks{grid-template-columns:1fr 2fr 1fr 1fr}
-.todo-form-grid.questions{grid-template-columns:1fr 2fr 1fr 1fr 1fr}
+.todo-form-grid.tasks{grid-template-columns:1fr 2fr 1fr 1fr 1fr}
+.todo-form-grid.questions{grid-template-columns:1fr 2fr 1fr 1fr 1fr 1fr}
 .subtask-panel{background:#F8FAFC;border-top:1px solid #E2E8F0;padding:12px 16px}
 .subtask-item{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #F1F5F9}
 .subtask-item:last-of-type{border-bottom:none}
@@ -814,6 +818,7 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
         <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
         <input className="inp" placeholder="Task text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
         <input className="inp" placeholder="Kind (concall/model/note)" value={form.kind} onChange={e => setForm(prev => ({ ...prev, kind: e.target.value }))} />
+        <input className="inp" placeholder="Industry (optional)" value={form.industry} onChange={e => setForm(prev => ({ ...prev, industry: e.target.value }))} />
         <input className="inp" type="date" value={form.dueDate} onChange={e => setForm(prev => ({ ...prev, dueDate: e.target.value }))} />
       </div>
       <textarea className="inp" rows={2} placeholder="Optional notes" value={form.notes} onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))} style={{resize:"vertical",marginBottom:10}} />
@@ -845,8 +850,9 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
             <tr key={t.id} style={{background: isExpanded ? "#FAFBFC" : ""}}>
               <td style={{width:28,textAlign:"center",padding:"12px 4px"}}>
                 <button onClick={() => setExpandedId(isExpanded ? null : t.id)}
-                  style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:"#64748B",padding:2,lineHeight:1}}>
-                  {subs.length > 0 ? (isExpanded ? "▾" : "▸") : "·"}
+                  style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:P,padding:2,lineHeight:1,fontWeight:700}}
+                  title={isExpanded ? "Hide subtasks" : "Show / add subtasks"}>
+                  {isExpanded ? "▾" : "▸"}
                 </button>
               </td>
               <td style={{fontWeight:700}}>{t.ticker || "-"}</td>
@@ -856,6 +862,7 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
                   {subs.length > 0 && <span className="subtask-progress">{doneSubs}/{subs.length}</span>}
                 </div>
                 {t.notes ? <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{t.notes}</div> : null}
+                              {t.industry ? <div style={{fontSize:11,color:P,fontWeight:600,marginTop:2}}>{t.industry}</div> : null}
               </td>
               <td>{t.kind || "-"}</td>
               <td style={{color:overdue ? "#DC2626" : "inherit",fontWeight:overdue ? 700 : 500}}>{t.dueDate ? fmtDate(t.dueDate) : "-"}</td>
@@ -951,6 +958,7 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
         <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
         <input className="inp" placeholder="Question text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
         <input className="inp" placeholder="Kind (optional)" value={form.kind} onChange={e => setForm(prev => ({ ...prev, kind: e.target.value }))} />
+        <input className="inp" placeholder="Industry (optional)" value={form.industry} onChange={e => setForm(prev => ({ ...prev, industry: e.target.value }))} />
         <input className="inp" type="date" value={form.dueDate} onChange={e => setForm(prev => ({ ...prev, dueDate: e.target.value }))} />
         <select className="inp" value={form.status} onChange={e => setForm(prev => ({ ...prev, status: e.target.value }))}>
           <option value="open">open</option>
@@ -973,7 +981,10 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
       <tbody>{filtered.length === 0 ? <tr><td colSpan={6} style={{textAlign:"center",padding:36,color:"#94A3B8"}}>No questions found</td></tr> :
         filtered.map(q => <tr key={q.id}>
           <td style={{fontWeight:700}}>{q.ticker || "-"}</td>
-          <td style={{fontWeight:600}}>{q.text}</td>
+          <td>
+            <div style={{fontWeight:600}}>{q.text}</div>
+            {q.industry ? <div style={{fontSize:11,color:P,fontWeight:600,marginTop:2}}>{q.industry}</div> : null}
+          </td>
           <td>{q.kind || "-"}</td>
           <td>{q.dueDate ? fmtDate(q.dueDate) : "-"}</td>
           <td><span className={`badge ${q.status === "resolved" ? "badge-paid" : q.status === "stale" ? "badge-draft" : "badge-finalized"}`}>{q.status}</span></td>
