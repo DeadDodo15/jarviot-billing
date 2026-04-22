@@ -83,7 +83,7 @@ function emptySubtask(text = "") {
 function emptyTask() {
   return {
     id: uid(),
-    ticker: "",
+    ticker: "-",
     text: "",
     kind: "",
     industry: "",
@@ -99,7 +99,7 @@ function emptyTask() {
 function emptyQuestion() {
   return {
     id: uid(),
-    ticker: "",
+    ticker: "-",
     text: "",
     kind: "",
     industry: "",
@@ -146,6 +146,17 @@ function normalizeQuestion(q) {
     createdAt: q?.createdAt || new Date().toISOString(),
     resolvedAt: q?.resolvedAt || null,
   };
+}
+
+function normalizeTickerInput(nextValue, previousValue) {
+  if (previousValue === "-" && nextValue.startsWith("-") && nextValue.length > 1) {
+    return nextValue.slice(1);
+  }
+  return nextValue;
+}
+
+function finalizeTicker(value) {
+  return value.trim().toUpperCase() || "-";
 }
 
 function normalizeData(raw) {
@@ -753,14 +764,17 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
   const [filter, setFilter] = useState("open");
   const [tickerFilter, setTickerFilter] = useState("");
   const [kindFilter, setKindFilter] = useState("");
+  const [industryFilter, setIndustryFilter] = useState("");
   const formRef = useRef(null);
 
   const kinds = Array.from(new Set(tasks.map(t => (t.kind || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const industries = Array.from(new Set(tasks.map(t => (t.industry || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
   const filtered = [...tasks]
     .filter(t => filter === "all" ? true : (filter === "open" ? t.status !== "completed" : t.status === "completed"))
     .filter(t => tickerFilter.trim() ? (t.ticker || "").toLowerCase().includes(tickerFilter.trim().toLowerCase()) : true)
     .filter(t => kindFilter ? (t.kind || "").toLowerCase() === kindFilter.toLowerCase() : true)
+    .filter(t => industryFilter ? (t.industry || "").trim().toLowerCase() === industryFilter.toLowerCase() : true)
     .sort((a, b) => {
       if (a.status !== b.status) return a.status === "completed" ? 1 : -1;
       const ad = a.dueDate || "9999-12-31";
@@ -778,9 +792,8 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
   const cancelEdit = () => { setEditingId(null); setForm(emptyTask()); };
 
   const handleSave = () => {
-    if (!form.ticker.trim()) { alert("Ticker is required. Use - for non-company items."); return; }
     if (!form.text.trim()) { alert("Task text is required."); return; }
-    onSaveTask({ ...form, ticker: form.ticker.trim().toUpperCase(), text: form.text.trim(), kind: form.kind.trim(), notes: form.notes.trim() });
+    onSaveTask({ ...form, ticker: finalizeTicker(form.ticker), text: form.text.trim(), kind: form.kind.trim(), industry: form.industry.trim(), notes: form.notes.trim() });
     setEditingId(null);
     setForm(emptyTask());
   };
@@ -815,7 +828,9 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
     <div ref={formRef} className="card" style={{marginBottom:16,border: editingId ? `2px solid ${P}` : "1px solid #E2E8F0"}}>
       {editingId && <div style={{fontSize:12,fontWeight:600,color:P,marginBottom:10}}>✎ Editing task — make changes below then click Update</div>}
       <div className="todo-form-grid tasks">
-        <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
+        <input className="inp" placeholder="Ticker (or -)" value={form.ticker}
+          onChange={e => setForm(prev => ({ ...prev, ticker: normalizeTickerInput(e.target.value, prev.ticker) }))}
+          onBlur={() => setForm(prev => ({ ...prev, ticker: prev.ticker.trim() || "-" }))} />
         <input className="inp" placeholder="Task text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
         <input className="inp" placeholder="Kind (concall/model/note)" value={form.kind} onChange={e => setForm(prev => ({ ...prev, kind: e.target.value }))} />
         <input className="inp" placeholder="Industry (optional)" value={form.industry} onChange={e => setForm(prev => ({ ...prev, industry: e.target.value }))} />
@@ -834,6 +849,10 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
       <select className="inp" style={{maxWidth:180}} value={kindFilter} onChange={e => setKindFilter(e.target.value)}>
         <option value="">All kinds</option>
         {kinds.map(k => <option key={k} value={k}>{k}</option>)}
+      </select>
+      <select className="inp" style={{maxWidth:180}} value={industryFilter} onChange={e => setIndustryFilter(e.target.value)}>
+        <option value="">All industries</option>
+        {industries.map(industry => <option key={industry} value={industry}>{industry}</option>)}
       </select>
     </div>
 
@@ -919,10 +938,13 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
   const [editingId, setEditingId] = useState(null);
   const [statusFilter, setStatusFilter] = useState("open");
   const [search, setSearch] = useState("");
+  const [industryFilter, setIndustryFilter] = useState("");
   const formRef = useRef(null);
+  const industries = Array.from(new Set(questions.map(q => (q.industry || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
   const filtered = [...questions]
     .filter(q => statusFilter === "all" ? true : q.status === statusFilter)
+    .filter(q => industryFilter ? (q.industry || "").trim().toLowerCase() === industryFilter.toLowerCase() : true)
     .filter(q => {
       if (!search.trim()) return true;
       const s = search.toLowerCase();
@@ -941,9 +963,8 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
   const cancelEdit = () => { setEditingId(null); setForm(emptyQuestion()); };
 
   const handleSave = () => {
-    if (!form.ticker.trim()) { alert("Ticker is required. Use - for non-company items."); return; }
     if (!form.text.trim()) { alert("Question text is required."); return; }
-    onSaveQuestion({ ...form, ticker: form.ticker.trim().toUpperCase(), text: form.text.trim(), kind: form.kind.trim() });
+    onSaveQuestion({ ...form, ticker: finalizeTicker(form.ticker), text: form.text.trim(), kind: form.kind.trim(), industry: form.industry.trim() });
     setEditingId(null);
     setForm(emptyQuestion());
   };
@@ -955,7 +976,9 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
     <div ref={formRef} className="card" style={{marginBottom:16,border: editingId ? `2px solid ${P}` : "1px solid #E2E8F0"}}>
       {editingId && <div style={{fontSize:12,fontWeight:600,color:P,marginBottom:10}}>✎ Editing question — make changes below then click Update</div>}
       <div className="todo-form-grid questions">
-        <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
+        <input className="inp" placeholder="Ticker (or -)" value={form.ticker}
+          onChange={e => setForm(prev => ({ ...prev, ticker: normalizeTickerInput(e.target.value, prev.ticker) }))}
+          onBlur={() => setForm(prev => ({ ...prev, ticker: prev.ticker.trim() || "-" }))} />
         <input className="inp" placeholder="Question text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
         <input className="inp" placeholder="Kind (optional)" value={form.kind} onChange={e => setForm(prev => ({ ...prev, kind: e.target.value }))} />
         <input className="inp" placeholder="Industry (optional)" value={form.industry} onChange={e => setForm(prev => ({ ...prev, industry: e.target.value }))} />
@@ -975,6 +998,10 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
     <div className="todo-actions" style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
       {["open", "resolved", "stale", "all"].map(f => <button key={f} className={`btn ${statusFilter===f?"btn-p":"btn-o"}`} style={{textTransform:"capitalize"}} onClick={() => setStatusFilter(f)}>{f}</button>)}
       <input className="inp" style={{maxWidth:240}} placeholder="Search questions" value={search} onChange={e => setSearch(e.target.value)} />
+      <select className="inp" style={{maxWidth:180}} value={industryFilter} onChange={e => setIndustryFilter(e.target.value)}>
+        <option value="">All industries</option>
+        {industries.map(industry => <option key={industry} value={industry}>{industry}</option>)}
+      </select>
     </div>
 
     <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Ticker</th><th>Question</th><th>Kind</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead>
