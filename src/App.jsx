@@ -73,7 +73,75 @@ function emptyItem() { return { id: uid(), description: "", hsn: "", gst: 18, qt
 
 function emptyInvoice(invoices) {
   const today = new Date().toISOString().split("T")[0];
-  return { id: uid(), invoiceNo: suggestInvoiceNo(today, invoices), invoiceDate: today, dueDate: addDays(today, 15), items: [emptyItem()], status: "draft", recurring: null, createdAt: new Date().toISOString() };
+  return { id: uid(), invoiceNo: suggestInvoiceNo(today, invoices), invoiceDate: today, dueDate: addDays(today, 15), items: [emptyItem()], status: "draft", recurring: null, notes: "", createdAt: new Date().toISOString() };
+}
+
+function emptyTask() {
+  return {
+    id: uid(),
+    ticker: "",
+    text: "",
+    kind: "",
+    dueDate: "",
+    notes: "",
+    status: "open",
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+  };
+}
+
+function emptyQuestion() {
+  return {
+    id: uid(),
+    ticker: "",
+    text: "",
+    kind: "",
+    dueDate: "",
+    status: "open",
+    createdAt: new Date().toISOString(),
+    resolvedAt: null,
+  };
+}
+
+function normalizeTask(t) {
+  return {
+    id: t?.id || uid(),
+    ticker: t?.ticker || "",
+    text: t?.text || "",
+    kind: t?.kind || "",
+    dueDate: t?.dueDate || "",
+    notes: t?.notes || "",
+    status: t?.status === "completed" ? "completed" : "open",
+    createdAt: t?.createdAt || new Date().toISOString(),
+    completedAt: t?.completedAt || null,
+  };
+}
+
+function normalizeQuestion(q) {
+  const status = ["open", "resolved", "stale"].includes(q?.status) ? q.status : "open";
+  return {
+    id: q?.id || uid(),
+    ticker: q?.ticker || "",
+    text: q?.text || "",
+    kind: q?.kind || "",
+    dueDate: q?.dueDate || "",
+    status,
+    createdAt: q?.createdAt || new Date().toISOString(),
+    resolvedAt: q?.resolvedAt || null,
+  };
+}
+
+function normalizeData(raw) {
+  const invoices = Array.isArray(raw?.invoices) ? raw.invoices : [];
+  const tasksRaw = Array.isArray(raw?.todos?.tasks) ? raw.todos.tasks : [];
+  const questionsRaw = Array.isArray(raw?.todos?.questions) ? raw.todos.questions : [];
+  return {
+    invoices,
+    todos: {
+      tasks: tasksRaw.map(normalizeTask),
+      questions: questionsRaw.map(normalizeQuestion),
+    },
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -84,8 +152,8 @@ const STORAGE_KEY = "jarviot-invoices";
 function loadLocalData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : { invoices: [] };
-  } catch { return { invoices: [] }; }
+    return raw ? normalizeData(JSON.parse(raw)) : normalizeData({});
+  } catch { return normalizeData({}); }
 }
 
 function saveLocalData(data) {
@@ -95,8 +163,8 @@ function saveLocalData(data) {
 async function loadFirestoreData(uid) {
   try {
     const snap = await getDoc(doc(db, "users", uid));
-    if (snap.exists()) return snap.data();
-    return { invoices: [] };
+    if (snap.exists()) return normalizeData(snap.data());
+    return normalizeData({});
   } catch (e) { console.error("Firestore load failed", e); return loadLocalData(); }
 }
 
@@ -121,8 +189,14 @@ function importJSON(file) {
     reader.onload = (e) => {
       try {
         const data = JSON.parse(e.target.result);
-        if (!data.invoices || !Array.isArray(data.invoices)) { reject(new Error("Invalid backup file")); return; }
-        resolve(data);
+        const hasInvoices = Array.isArray(data?.invoices);
+        const hasTasks = Array.isArray(data?.todos?.tasks);
+        const hasQuestions = Array.isArray(data?.todos?.questions);
+        if (!hasInvoices && !hasTasks && !hasQuestions) {
+          reject(new Error("Invalid backup file"));
+          return;
+        }
+        resolve(normalizeData(data));
       } catch { reject(new Error("Invalid JSON")); }
     };
     reader.onerror = () => reject(new Error("File read failed"));
@@ -146,7 +220,7 @@ function processRecurring(data) {
     return { ...inv, recurring: { ...inv.recurring, nextDate: nextDate(nd, inv.recurring.frequency), lastGenerated: today } };
   });
   if (!changed) return null;
-  return { invoices: [...updated, ...newInvoices] };
+  return { ...data, invoices: [...updated, ...newInvoices] };
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -189,7 +263,7 @@ const css = `
 *{margin:0;padding:0;box-sizing:border-box}
 html,body,#root{height:100%}
 .app{display:flex;height:100vh;background:${BG};color:#1a1a2e;font-family:'DM Sans',sans-serif}
-.sb{width:220px;background:#fff;border-right:1px solid #E2E8F0;display:flex;flex-direction:column;padding:20px 0;flex-shrink:0}
+.sb{width:220px;background:#fff;border-right:1px solid #E2E8F0;display:flex;flex-direction:column;padding:20px 0;flex-shrink:0;transition:transform .25s ease}
 .sb-title{font-size:15px;font-weight:700;color:${P};padding:0 20px;margin-bottom:20px;letter-spacing:-0.3px}
 .sb-item{display:flex;align-items:center;gap:10px;padding:9px 20px;font-size:13px;font-weight:500;color:#64748B;cursor:pointer;border-left:3px solid transparent;transition:all .15s;user-select:none}
 .sb-item:hover{background:${PL};color:${P}}
@@ -203,7 +277,8 @@ html,body,#root{height:100%}
 .card{background:#fff;border-radius:10px;padding:18px;border:1px solid #E2E8F0}
 .card-label{font-size:11px;font-weight:600;color:#94A3B8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
 .card-val{font-size:22px;font-weight:700}
-.tbl{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border-radius:10px;overflow:hidden;border:1px solid #E2E8F0}
+.tbl-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px;border:1px solid #E2E8F0;background:#fff}
+.tbl{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border-radius:10px;overflow:hidden;border:none;min-width:600px}
 .tbl th{padding:10px 12px;font-size:11px;font-weight:600;color:#94A3B8;text-transform:uppercase;letter-spacing:.4px;text-align:left;border-bottom:1px solid #E2E8F0;background:#FAFBFC}
 .tbl td{padding:12px;border-bottom:1px solid #F1F5F9}
 .tbl tr:last-child td{border-bottom:none}
@@ -232,6 +307,36 @@ html,body,#root{height:100%}
 .toggle.on{background:${P}}
 .toggle::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.15)}
 .toggle.on::after{transform:translateX(18px)}
+.mobile-header{display:none;position:sticky;top:0;z-index:100;background:#fff;border-bottom:1px solid #E2E8F0;padding:12px 16px;align-items:center;justify-content:space-between}
+.hamburger{background:none;border:none;font-size:22px;cursor:pointer;padding:4px 8px;color:#64748B}
+.sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:199}
+@media(max-width:768px){
+  .app{flex-direction:column;height:auto;min-height:100vh}
+  .mobile-header{display:flex}
+  .sb{position:fixed;top:0;left:0;bottom:0;z-index:200;transform:translateX(-100%);width:260px;padding-top:20px;box-shadow:4px 0 24px rgba(0,0,0,.12)}
+  .sb.open{transform:translateX(0)}
+  .sb-overlay.open{display:block}
+  .main{padding:16px;padding-top:8px}
+  .page-title{font-size:18px}
+  .cards{grid-template-columns:repeat(2,1fr);gap:10px}
+  .card{padding:14px}
+  .card-val{font-size:18px}
+  .form-header{flex-direction:column;gap:12px;align-items:stretch!important}
+  .form-header .btn{width:100%;justify-content:center}
+  .form-meta{grid-template-columns:1fr!important}
+  .form-bottom{grid-template-columns:1fr!important}
+  .preview-actions{flex-wrap:wrap}
+  .preview-box{padding:20px 16px!important}
+  .preview-parties{grid-template-columns:1fr!important}
+  .preview-summary{flex-direction:column}
+  .preview-bank{flex-direction:column}
+  .folder-inv{margin-left:24px}
+  .folder-month{margin-left:12px}
+}
+@media(max-width:480px){
+  .cards{grid-template-columns:1fr 1fr;gap:8px}
+  .btn{padding:7px 12px;font-size:12px}
+}
 `;
 
 /* ═══════════════════════════════════════════════════════════════
@@ -258,7 +363,7 @@ function LoginScreen({ onLogin }) {
   return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:BG,fontFamily:"'DM Sans',sans-serif"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');`}</style>
-      <div style={{background:"#fff",borderRadius:16,padding:"48px 40px",width:380,boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:"48px 40px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}}>
         <div style={{textAlign:"center",marginBottom:32}}>
           <div style={{fontSize:28,fontWeight:700,color:P,marginBottom:4}}>⬡ Jarviot Invoices</div>
           <div style={{fontSize:13,color:"#94A3B8"}}>Sign in to continue</div>
@@ -290,10 +395,12 @@ function LoginScreen({ onLogin }) {
    ═══════════════════════════════════════════════════════════════ */
 export default function InvoiceApp() {
   const [user, setUser] = useState(undefined); // undefined = loading, null = logged out
-  const [data, setData] = useState({ invoices: [] });
-  const [view, setView] = useState("dashboard");
+  const [data, setData] = useState(normalizeData({}));
+  const [section, setSection] = useState("billing");
+  const [view, setView] = useState("billing-dashboard");
   const [editInv, setEditInv] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const fileRef = useRef(null);
 
   // Auth listener
@@ -314,23 +421,68 @@ export default function InvoiceApp() {
   }, [user]);
 
   const save = useCallback((d) => {
-    setData(d);
-    if (user) saveFirestoreData(user.uid, d);
+    const normalized = normalizeData(d);
+    setData(normalized);
+    if (user) saveFirestoreData(user.uid, normalized);
   }, [user]);
 
-  const goCreate = () => { setEditInv(emptyInvoice(data.invoices)); setView("form"); };
-  const goEdit = (inv) => { setEditInv({ ...inv, items: inv.items.map(i => ({...i})) }); setView("form"); };
-  const goPreview = (inv) => { setEditInv(inv); setView("preview"); };
+  const goCreate = () => { setSection("billing"); setEditInv(emptyInvoice(data.invoices)); setView("billing-form"); };
+  const goEdit = (inv) => { setSection("billing"); setEditInv({ ...inv, items: inv.items.map(i => ({...i})) }); setView("billing-form"); };
+  const goPreview = (inv) => { setSection("billing"); setEditInv(inv); setView("billing-preview"); };
 
   const saveInvoice = (inv) => {
     const exists = data.invoices.find(i => i.id === inv.id);
     const newInvoices = exists ? data.invoices.map(i => i.id === inv.id ? inv : i) : [...data.invoices, inv];
-    save({ invoices: newInvoices });
-    setView("list");
+    save({ ...data, invoices: newInvoices });
+    setView("billing-list");
   };
 
-  const deleteInvoice = (id) => { save({ invoices: data.invoices.filter(i => i.id !== id) }); if (view==="preview") setView("list"); };
-  const markPaid = (id) => { save({ invoices: data.invoices.map(i => i.id === id ? {...i, status:"paid"} : i) }); };
+  const deleteInvoice = (id) => { save({ ...data, invoices: data.invoices.filter(i => i.id !== id) }); if (view==="billing-preview") setView("billing-list"); };
+  const markPaid = (id) => { save({ ...data, invoices: data.invoices.map(i => i.id === id ? {...i, status:"paid"} : i) }); };
+
+  const saveTask = (task) => {
+    const normalized = normalizeTask(task);
+    const exists = data.todos.tasks.find(t => t.id === normalized.id);
+    const tasks = exists
+      ? data.todos.tasks.map(t => t.id === normalized.id ? normalized : t)
+      : [normalized, ...data.todos.tasks];
+    save({ ...data, todos: { ...data.todos, tasks } });
+  };
+
+  const toggleTask = (id) => {
+    const tasks = data.todos.tasks.map(t => {
+      if (t.id !== id) return t;
+      const completed = t.status !== "completed";
+      return { ...t, status: completed ? "completed" : "open", completedAt: completed ? new Date().toISOString() : null };
+    });
+    save({ ...data, todos: { ...data.todos, tasks } });
+  };
+
+  const deleteTask = (id) => {
+    save({ ...data, todos: { ...data.todos, tasks: data.todos.tasks.filter(t => t.id !== id) } });
+  };
+
+  const saveQuestion = (question) => {
+    const normalized = normalizeQuestion(question);
+    const exists = data.todos.questions.find(q => q.id === normalized.id);
+    const questions = exists
+      ? data.todos.questions.map(q => q.id === normalized.id ? normalized : q)
+      : [normalized, ...data.todos.questions];
+    save({ ...data, todos: { ...data.todos, questions } });
+  };
+
+  const setQuestionStatus = (id, status) => {
+    const questions = data.todos.questions.map(q => q.id !== id ? q : {
+      ...q,
+      status,
+      resolvedAt: status === "resolved" ? new Date().toISOString() : null,
+    });
+    save({ ...data, todos: { ...data.todos, questions } });
+  };
+
+  const deleteQuestion = (id) => {
+    save({ ...data, todos: { ...data.todos, questions: data.todos.questions.filter(q => q.id !== id) } });
+  };
 
   const handleImport = async (e) => {
     const file = e.target.files?.[0];
@@ -338,12 +490,19 @@ export default function InvoiceApp() {
     try {
       const imported = await importJSON(file);
       save(imported);
-      alert(`Imported ${imported.invoices.length} invoices successfully!`);
+      alert(`Imported ${imported.invoices.length} invoices, ${imported.todos.tasks.length} tasks, and ${imported.todos.questions.length} questions.`);
     } catch (err) { alert("Import failed: " + err.message); }
     e.target.value = "";
   };
 
-  const handleLogout = async () => { await signOut(auth); setView("dashboard"); };
+  const handleLogout = async () => {
+    await signOut(auth);
+    setSection("billing");
+    setView("billing-dashboard");
+  };
+
+  const billingNav = [["billing-dashboard","◫","Dashboard"],["billing-list","☰","All Invoices"],["billing-folder","⊞","Folder"],["billing-recurring","↻","Recurring"]];
+  const todoNav = [["todo-dashboard","◫","Overview"],["todo-tasks","✓","Tasks"],["todo-questions","?","Questions"]];
 
   // Loading state
   if (user === undefined) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:BG,fontFamily:"'DM Sans',sans-serif",color:"#94A3B8"}}>Loading...</div>;
@@ -356,12 +515,25 @@ export default function InvoiceApp() {
 
   return (
     <div className="app"><style>{css}</style>
-      <div className="sb">
-        <div className="sb-title">⬡ Jarviot Invoices</div>
-        {[["dashboard","◫","Dashboard"],["list","☰","All Invoices"],["folder","⊞","Folder"],["recurring","↻","Recurring"]].map(([v,ico,label]) => (
-          <div key={v} className={`sb-item ${view===v?"active":""}`} onClick={() => setView(v)}><span style={{fontSize:16,width:20,textAlign:"center"}}>{ico}</span>{label}</div>
+      <div className="mobile-header">
+        <button className="hamburger" onClick={() => setSidebarOpen(true)}>☰</button>
+        <span style={{fontWeight:700,color:P,fontSize:15}}>⬡ Jarviot Workspace</span>
+        <span style={{width:36}}></span>
+      </div>
+      <div className={`sb-overlay ${sidebarOpen?"open":""}`} onClick={() => setSidebarOpen(false)} />
+      <div className={`sb ${sidebarOpen?"open":""}`}>
+        <div className="sb-title">⬡ Jarviot Workspace</div>
+        <div style={{display:"flex",gap:8,padding:"0 16px",marginBottom:14}}>
+          <button className={`btn ${section==="billing"?"btn-p":"btn-o"}`} style={{flex:1,justifyContent:"center",padding:"7px 8px",fontSize:12}} onClick={() => { setSection("billing"); setView("billing-dashboard"); setSidebarOpen(false); }}>Billing</button>
+          <button className={`btn ${section==="todo"?"btn-p":"btn-o"}`} style={{flex:1,justifyContent:"center",padding:"7px 8px",fontSize:12}} onClick={() => { setSection("todo"); setView("todo-dashboard"); setSidebarOpen(false); }}>Todo</button>
+        </div>
+        {(section === "billing" ? billingNav : todoNav).map(([v,ico,label]) => (
+          <div key={v} className={`sb-item ${view===v?"active":""}`} onClick={() => { setView(v); setSidebarOpen(false); }}><span style={{fontSize:16,width:20,textAlign:"center"}}>{ico}</span>{label}</div>
         ))}
-        <button className="sb-new" onClick={goCreate}>+ New Invoice</button>
+        <button className="sb-new" onClick={() => {
+          if (section === "billing") goCreate();
+          else { setView("todo-tasks"); setSidebarOpen(false); }
+        }}>{section === "billing" ? "+ New Invoice" : "+ Add Task"}</button>
         <div style={{marginTop:"auto",padding:"0 16px",display:"flex",flexDirection:"column",gap:8}}>
           <button className="btn btn-s" style={{width:"100%",justifyContent:"center"}} onClick={() => exportJSON(data)}>↓ Export JSON</button>
           <button className="btn btn-s" style={{width:"100%",justifyContent:"center"}} onClick={() => fileRef.current?.click()}>↑ Import JSON</button>
@@ -371,12 +543,15 @@ export default function InvoiceApp() {
         </div>
       </div>
       <div className="main">
-        {view === "dashboard" && <Dashboard data={data} goPreview={goPreview} goEdit={goEdit} goCreate={goCreate} />}
-        {view === "list" && <InvList data={data} goPreview={goPreview} goEdit={goEdit} markPaid={markPaid} deleteInvoice={deleteInvoice} />}
-        {view === "folder" && <FolderView data={data} goPreview={goPreview} />}
-        {view === "recurring" && <RecurringView data={data} goPreview={goPreview} goEdit={goEdit} />}
-        {view === "form" && editInv && <InvForm inv={editInv} onSave={saveInvoice} onCancel={() => setView("list")} allInvoices={data.invoices} />}
-        {view === "preview" && editInv && <Preview inv={editInv} onBack={() => setView("list")} onEdit={() => goEdit(editInv)} onDelete={() => deleteInvoice(editInv.id)} />}
+        {view === "billing-dashboard" && <Dashboard data={data} goPreview={goPreview} goEdit={goEdit} goCreate={goCreate} />}
+        {view === "billing-list" && <InvList data={data} goPreview={goPreview} goEdit={goEdit} markPaid={markPaid} deleteInvoice={deleteInvoice} />}
+        {view === "billing-folder" && <FolderView data={data} goPreview={goPreview} />}
+        {view === "billing-recurring" && <RecurringView data={data} goPreview={goPreview} goEdit={goEdit} />}
+        {view === "billing-form" && editInv && <InvForm inv={editInv} onSave={saveInvoice} onCancel={() => setView("billing-list")} allInvoices={data.invoices} />}
+        {view === "billing-preview" && editInv && <Preview inv={editInv} onBack={() => setView("billing-list")} onEdit={() => goEdit(editInv)} onDelete={() => deleteInvoice(editInv.id)} />}
+        {view === "todo-dashboard" && <TodoDashboard todos={data.todos} />}
+        {view === "todo-tasks" && <TodoTasks tasks={data.todos.tasks} onSaveTask={saveTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} />}
+        {view === "todo-questions" && <TodoQuestions questions={data.todos.questions} onSaveQuestion={saveQuestion} onSetQuestionStatus={setQuestionStatus} onDeleteQuestion={deleteQuestion} />}
       </div>
     </div>
   );
@@ -404,16 +579,16 @@ function Dashboard({ data, goPreview, goEdit, goCreate }) {
 
     {drafts.length > 0 && <>
       <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Pending Drafts</div>
-      <table className="tbl" style={{marginBottom:24}}><thead><tr><th>Invoice No</th><th>Date</th><th style={{textAlign:"right"}}>Amount</th><th>Actions</th></tr></thead>
-      <tbody>{drafts.map(i => { const tot = computeTotals(computeItems(i.items)).total; return <tr key={i.id}><td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td style={{textAlign:"right"}}>₹{fmt(tot)}</td><td><button className="btn btn-s" style={{marginRight:6}} onClick={() => goEdit(i)}>Edit</button><button className="btn btn-o" onClick={() => goPreview(i)}>View</button></td></tr>; })}</tbody></table>
+      <div className="tbl-wrap" style={{marginBottom:24}}><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th style={{textAlign:"right"}}>Amount</th><th>Actions</th></tr></thead>
+      <tbody>{drafts.map(i => { const tot = computeTotals(computeItems(i.items)).total; return <tr key={i.id}><td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td style={{textAlign:"right"}}>₹{fmt(tot)}</td><td><button className="btn btn-s" style={{marginRight:6}} onClick={() => goEdit(i)}>Edit</button><button className="btn btn-o" onClick={() => goPreview(i)}>View</button></td></tr>; })}</tbody></table></div>
     </>}
 
     {data.invoices.length === 0 && <div style={{textAlign:"center",padding:"60px 0",color:"#94A3B8"}}><div style={{fontSize:48,marginBottom:12}}>📄</div><div style={{fontSize:15,fontWeight:600,marginBottom:8}}>No invoices yet</div><button className="btn btn-p" onClick={goCreate}>Create your first invoice</button></div>}
 
     {data.invoices.length > 0 && <>
       <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Recent Invoices</div>
-      <table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th style={{textAlign:"right"}}>Total</th><th>Status</th><th></th></tr></thead>
-      <tbody>{[...data.invoices].sort((a,b) => b.invoiceDate.localeCompare(a.invoiceDate)).slice(0,5).map(i => { const tot = computeTotals(computeItems(i.items)).total; return <tr key={i.id}><td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td style={{textAlign:"right"}}>₹{fmt(tot)}</td><td><span className={`badge badge-${i.status}`}>{i.status}</span>{i.recurring?.active && <span className="badge badge-recurring" style={{marginLeft:6}}>↻</span>}</td><td><button className="btn btn-o" onClick={() => goPreview(i)}>View</button></td></tr>; })}</tbody></table>
+      <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th style={{textAlign:"right"}}>Total</th><th>Status</th><th></th></tr></thead>
+      <tbody>{[...data.invoices].sort((a,b) => b.invoiceDate.localeCompare(a.invoiceDate)).slice(0,5).map(i => { const tot = computeTotals(computeItems(i.items)).total; return <tr key={i.id}><td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td style={{textAlign:"right"}}>₹{fmt(tot)}</td><td><span className={`badge badge-${i.status}`}>{i.status}</span>{i.recurring?.active && <span className="badge badge-recurring" style={{marginLeft:6}}>↻</span>}</td><td><button className="btn btn-o" onClick={() => goPreview(i)}>View</button></td></tr>; })}</tbody></table></div>
     </>}
   </>);
 }
@@ -423,19 +598,35 @@ function Dashboard({ data, goPreview, goEdit, goCreate }) {
    ═══════════════════════════════════════════════════════════════ */
 function InvList({ data, goPreview, goEdit, markPaid, deleteInvoice }) {
   const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
   const sorted = [...data.invoices].sort((a,b) => b.invoiceDate.localeCompare(a.invoiceDate));
-  const filtered = filter === "all" ? sorted : sorted.filter(i => i.status === filter);
+  const byStatus = filter === "all" ? sorted : sorted.filter(i => i.status === filter);
+  const filtered = !search.trim() ? byStatus : byStatus.filter(i => {
+    const q = search.toLowerCase();
+    const tot = computeTotals(computeItems(i.items)).total;
+    return i.invoiceNo.toLowerCase().includes(q)
+      || fmt(tot).includes(q)
+      || String(Math.round(tot)).includes(q)
+      || i.items.some(it => it.description?.toLowerCase().includes(q))
+      || (i.notes || "").toLowerCase().includes(q);
+  });
 
   return (<>
     <div className="page-title">All Invoices</div>
-    <div style={{display:"flex",gap:8,marginBottom:20}}>{["all","draft","finalized","paid"].map(f => <button key={f} className={`btn ${filter===f?"btn-p":"btn-o"}`} onClick={() => setFilter(f)} style={{textTransform:"capitalize"}}>{f}</button>)}</div>
-    <table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th>Due Date</th><th style={{textAlign:"right"}}>Total</th><th>Status</th><th>Actions</th></tr></thead>
-    <tbody>{filtered.length === 0 ? <tr><td colSpan={6} style={{textAlign:"center",padding:40,color:"#94A3B8"}}>No invoices found</td></tr> :
+    <div style={{display:"flex",gap:12,marginBottom:20,flexWrap:"wrap",alignItems:"center"}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{["all","draft","finalized","paid"].map(f => <button key={f} className={`btn ${filter===f?"btn-p":"btn-o"}`} onClick={() => setFilter(f)} style={{textTransform:"capitalize"}}>{f}</button>)}</div>
+      <div style={{flex:1,minWidth:200,maxWidth:320,position:"relative"}}>
+        <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#94A3B8",fontSize:14,pointerEvents:"none"}}>⌕</span>
+        <input className="inp" placeholder="Search invoices..." value={search} onChange={e => setSearch(e.target.value)} style={{paddingLeft:30}} />
+      </div>
+    </div>
+    <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th>Due Date</th><th style={{textAlign:"right"}}>Total</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>{filtered.length === 0 ? <tr><td colSpan={6} style={{textAlign:"center",padding:40,color:"#94A3B8"}}>{search ? "No invoices match your search" : "No invoices found"}</td></tr> :
       filtered.map(i => { const tot = computeTotals(computeItems(i.items)).total; return <tr key={i.id}>
         <td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td>{fmtDate(i.dueDate)}</td><td style={{textAlign:"right",fontWeight:600}}>₹{fmt(tot)}</td>
         <td><span className={`badge badge-${i.status}`}>{i.status}</span>{i.recurring?.active && <span className="badge badge-recurring" style={{marginLeft:6}}>↻</span>}</td>
         <td style={{whiteSpace:"nowrap"}}><button className="btn btn-o" style={{marginRight:6}} onClick={() => goPreview(i)}>View</button><button className="btn btn-s" style={{marginRight:6}} onClick={() => goEdit(i)}>Edit</button>{i.status==="finalized" && <button className="btn btn-g" style={{fontSize:12,padding:"5px 10px",marginRight:6}} onClick={() => markPaid(i.id)}>Paid</button>}<button className="btn btn-d" onClick={() => { if(confirm("Delete this invoice?")) deleteInvoice(i.id); }}>✕</button></td>
-      </tr>; })}</tbody></table>
+      </tr>; })}</tbody></table></div>
   </>);
 }
 
@@ -468,6 +659,205 @@ function RecurringView({ data, goPreview, goEdit }) {
       <div><div style={{fontWeight:700,marginBottom:4}}>{i.invoiceNo} <span className="badge badge-recurring" style={{marginLeft:6}}>↻ {FREQ[i.recurring.frequency]}</span></div><div style={{fontSize:12,color:"#94A3B8"}}>Next: {fmtDate(i.recurring.nextDate)} · ₹{fmt(tot)}</div></div>
       <div style={{display:"flex",gap:8}}><button className="btn btn-o" onClick={() => goPreview(i)}>View</button><button className="btn btn-s" onClick={() => goEdit(i)}>Edit</button></div>
     </div>; })}</div>
+  </>);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TODO DASHBOARD
+   ═══════════════════════════════════════════════════════════════ */
+function TodoDashboard({ todos }) {
+  const today = new Date().toISOString().split("T")[0];
+  const openTasks = todos.tasks.filter(t => t.status !== "completed");
+  const overdueTasks = openTasks.filter(t => t.dueDate && t.dueDate < today);
+  const openQuestions = todos.questions.filter(q => q.status === "open");
+  const staleQuestions = todos.questions.filter(q => q.status === "stale");
+
+  const recentTasks = [...todos.tasks].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, 5);
+  const recentQuestions = [...todos.questions].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, 5);
+
+  return (<>
+    <div className="page-title">Todo Overview</div>
+    <div className="page-sub">Low-friction capture for tasks and research questions</div>
+
+    <div className="cards">
+      <div className="card"><div className="card-label">Open Tasks</div><div className="card-val">{openTasks.length}</div></div>
+      <div className="card"><div className="card-label">Overdue Tasks</div><div className="card-val" style={{color:"#DC2626"}}>{overdueTasks.length}</div></div>
+      <div className="card"><div className="card-label">Open Questions</div><div className="card-val" style={{color:P}}>{openQuestions.length}</div></div>
+      <div className="card"><div className="card-label">Stale Questions</div><div className="card-val" style={{color:"#B45309"}}>{staleQuestions.length}</div></div>
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+      <div className="card" style={{padding:0}}>
+        <div style={{padding:"14px 16px",borderBottom:"1px solid #E2E8F0",fontWeight:700}}>Recent Tasks</div>
+        {recentTasks.length === 0 ? <div style={{padding:16,color:"#94A3B8",fontSize:13}}>No tasks yet</div> : recentTasks.map(t => (
+          <div key={t.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9"}}>
+            <div style={{fontWeight:600,fontSize:13}}>{t.ticker || "-"} - {t.text}</div>
+            <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>{t.kind || "no kind"}{t.dueDate ? ` · due ${fmtDate(t.dueDate)}` : ""}{t.status === "completed" ? " · completed" : ""}</div>
+          </div>
+        ))}
+      </div>
+      <div className="card" style={{padding:0}}>
+        <div style={{padding:"14px 16px",borderBottom:"1px solid #E2E8F0",fontWeight:700}}>Recent Questions</div>
+        {recentQuestions.length === 0 ? <div style={{padding:16,color:"#94A3B8",fontSize:13}}>No questions yet</div> : recentQuestions.map(q => (
+          <div key={q.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9"}}>
+            <div style={{fontWeight:600,fontSize:13}}>{q.ticker || "-"} - {q.text}</div>
+            <div style={{fontSize:12,color:"#94A3B8",marginTop:2}}>{q.kind || "no kind"} · {q.status}{q.dueDate ? ` · due ${fmtDate(q.dueDate)}` : ""}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </>);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TODO TASKS
+   ═══════════════════════════════════════════════════════════════ */
+function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
+  const [form, setForm] = useState(emptyTask());
+  const [filter, setFilter] = useState("open");
+  const [tickerFilter, setTickerFilter] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
+
+  const kinds = Array.from(new Set(tasks.map(t => (t.kind || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+  const filtered = [...tasks]
+    .filter(t => filter === "all" ? true : (filter === "open" ? t.status !== "completed" : t.status === "completed"))
+    .filter(t => tickerFilter.trim() ? (t.ticker || "").toLowerCase().includes(tickerFilter.trim().toLowerCase()) : true)
+    .filter(t => kindFilter ? (t.kind || "").toLowerCase() === kindFilter.toLowerCase() : true)
+    .sort((a, b) => {
+      if (a.status !== b.status) return a.status === "completed" ? 1 : -1;
+      const ad = a.dueDate || "9999-12-31";
+      const bd = b.dueDate || "9999-12-31";
+      if (ad !== bd) return ad.localeCompare(bd);
+      return (b.createdAt || "").localeCompare(a.createdAt || "");
+    });
+
+  const handleCreate = () => {
+    if (!form.ticker.trim()) { alert("Ticker is required. Use - for non-company items."); return; }
+    if (!form.text.trim()) { alert("Task text is required."); return; }
+    onSaveTask({ ...form, ticker: form.ticker.trim().toUpperCase(), text: form.text.trim(), kind: form.kind.trim(), notes: form.notes.trim() });
+    setForm(emptyTask());
+  };
+
+  const today = new Date().toISOString().split("T")[0];
+
+  return (<>
+    <div className="page-title">Tasks</div>
+    <div className="page-sub">Required: ticker. Optional: kind, due date, notes.</div>
+
+    <div className="card" style={{marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 2fr 1fr 1fr",gap:10,marginBottom:10}}>
+        <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
+        <input className="inp" placeholder="Task text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
+        <input className="inp" placeholder="Kind (concall/model/note)" value={form.kind} onChange={e => setForm(prev => ({ ...prev, kind: e.target.value }))} />
+        <input className="inp" type="date" value={form.dueDate} onChange={e => setForm(prev => ({ ...prev, dueDate: e.target.value }))} />
+      </div>
+      <textarea className="inp" rows={2} placeholder="Optional notes" value={form.notes} onChange={e => setForm(prev => ({ ...prev, notes: e.target.value }))} style={{resize:"vertical",marginBottom:10}} />
+      <button className="btn btn-p" onClick={handleCreate}>Add Task</button>
+    </div>
+
+    <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+      {["open", "completed", "all"].map(f => <button key={f} className={`btn ${filter===f?"btn-p":"btn-o"}`} style={{textTransform:"capitalize"}} onClick={() => setFilter(f)}>{f}</button>)}
+      <input className="inp" style={{maxWidth:180}} placeholder="Filter ticker" value={tickerFilter} onChange={e => setTickerFilter(e.target.value)} />
+      <select className="inp" style={{maxWidth:180}} value={kindFilter} onChange={e => setKindFilter(e.target.value)}>
+        <option value="">All kinds</option>
+        {kinds.map(k => <option key={k} value={k}>{k}</option>)}
+      </select>
+    </div>
+
+    <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Ticker</th><th>Task</th><th>Kind</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>{filtered.length === 0 ? <tr><td colSpan={6} style={{textAlign:"center",padding:36,color:"#94A3B8"}}>No tasks found</td></tr> :
+        filtered.map(t => {
+          const overdue = t.status !== "completed" && t.dueDate && t.dueDate < today;
+          return <tr key={t.id}>
+            <td style={{fontWeight:700}}>{t.ticker || "-"}</td>
+            <td>
+              <div style={{fontWeight:600,fontSize:13}}>{t.text}</div>
+              {t.notes ? <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{t.notes}</div> : null}
+            </td>
+            <td>{t.kind || "-"}</td>
+            <td style={{color:overdue ? "#DC2626" : "inherit",fontWeight:overdue ? 700 : 500}}>{t.dueDate ? fmtDate(t.dueDate) : "-"}</td>
+            <td><span className={`badge ${t.status === "completed" ? "badge-paid" : "badge-finalized"}`}>{t.status}</span></td>
+            <td style={{whiteSpace:"nowrap"}}>
+              <button className="btn btn-s" style={{marginRight:6}} onClick={() => onToggleTask(t.id)}>{t.status === "completed" ? "Reopen" : "Done"}</button>
+              <button className="btn btn-d" onClick={() => { if (confirm("Delete this task?")) onDeleteTask(t.id); }}>✕</button>
+            </td>
+          </tr>;
+        })}
+      </tbody>
+    </table></div>
+  </>);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TODO QUESTIONS
+   ═══════════════════════════════════════════════════════════════ */
+function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDeleteQuestion }) {
+  const [form, setForm] = useState(emptyQuestion());
+  const [statusFilter, setStatusFilter] = useState("open");
+  const [search, setSearch] = useState("");
+
+  const filtered = [...questions]
+    .filter(q => statusFilter === "all" ? true : q.status === statusFilter)
+    .filter(q => {
+      if (!search.trim()) return true;
+      const s = search.toLowerCase();
+      return (q.ticker || "").toLowerCase().includes(s)
+        || (q.text || "").toLowerCase().includes(s)
+        || (q.kind || "").toLowerCase().includes(s);
+    })
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+  const handleCreate = () => {
+    if (!form.ticker.trim()) { alert("Ticker is required. Use - for non-company items."); return; }
+    if (!form.text.trim()) { alert("Question text is required."); return; }
+    onSaveQuestion({ ...form, ticker: form.ticker.trim().toUpperCase(), text: form.text.trim(), kind: form.kind.trim() });
+    setForm(emptyQuestion());
+  };
+
+  return (<>
+    <div className="page-title">Questions</div>
+    <div className="page-sub">Capture unknowns quickly. Status can be open, resolved, or stale.</div>
+
+    <div className="card" style={{marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr",gap:10,marginBottom:10}}>
+        <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
+        <input className="inp" placeholder="Question text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
+        <input className="inp" placeholder="Kind (optional)" value={form.kind} onChange={e => setForm(prev => ({ ...prev, kind: e.target.value }))} />
+        <input className="inp" type="date" value={form.dueDate} onChange={e => setForm(prev => ({ ...prev, dueDate: e.target.value }))} />
+        <select className="inp" value={form.status} onChange={e => setForm(prev => ({ ...prev, status: e.target.value }))}>
+          <option value="open">open</option>
+          <option value="resolved">resolved</option>
+          <option value="stale">stale</option>
+        </select>
+      </div>
+      <button className="btn btn-p" onClick={handleCreate}>Add Question</button>
+    </div>
+
+    <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+      {["open", "resolved", "stale", "all"].map(f => <button key={f} className={`btn ${statusFilter===f?"btn-p":"btn-o"}`} style={{textTransform:"capitalize"}} onClick={() => setStatusFilter(f)}>{f}</button>)}
+      <input className="inp" style={{maxWidth:240}} placeholder="Search questions" value={search} onChange={e => setSearch(e.target.value)} />
+    </div>
+
+    <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Ticker</th><th>Question</th><th>Kind</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>{filtered.length === 0 ? <tr><td colSpan={6} style={{textAlign:"center",padding:36,color:"#94A3B8"}}>No questions found</td></tr> :
+        filtered.map(q => <tr key={q.id}>
+          <td style={{fontWeight:700}}>{q.ticker || "-"}</td>
+          <td style={{fontWeight:600}}>{q.text}</td>
+          <td>{q.kind || "-"}</td>
+          <td>{q.dueDate ? fmtDate(q.dueDate) : "-"}</td>
+          <td><span className={`badge ${q.status === "resolved" ? "badge-paid" : q.status === "stale" ? "badge-draft" : "badge-finalized"}`}>{q.status}</span></td>
+          <td style={{whiteSpace:"nowrap"}}>
+            <select className="inp" style={{display:"inline-block",width:110,marginRight:6,padding:"6px 8px"}} value={q.status} onChange={e => onSetQuestionStatus(q.id, e.target.value)}>
+              <option value="open">open</option>
+              <option value="resolved">resolved</option>
+              <option value="stale">stale</option>
+            </select>
+            <button className="btn btn-d" onClick={() => { if (confirm("Delete this question?")) onDeleteQuestion(q.id); }}>✕</button>
+          </td>
+        </tr>)}
+      </tbody>
+    </table></div>
   </>);
 }
 
@@ -552,23 +942,23 @@ function InvForm({ inv: initial, onSave, onCancel, allInvoices }) {
   };
 
   return (<>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+    <div className="form-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
       <div className="page-title">{isEdit ? "Edit Invoice" : "New Invoice"}</div>
-      <div style={{display:"flex",gap:8}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button className="btn btn-o" onClick={onCancel}>Cancel</button>
         <button className="btn btn-s" onClick={() => handleSave("draft")}>Save Draft</button>
         <button className="btn btn-p" onClick={() => handleSave("finalized")}>Finalize</button>
       </div>
     </div>
 
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16,marginBottom:24,background:"#fff",padding:20,borderRadius:10,border:"1px solid #E2E8F0"}}>
+    <div className="form-meta" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16,marginBottom:24,background:"#fff",padding:20,borderRadius:10,border:"1px solid #E2E8F0"}}>
       <div><label className="label">Invoice Number</label><input className="inp" value={inv.invoiceNo} onChange={e => update("invoiceNo",e.target.value)} /></div>
       <div><label className="label">Invoice Date</label><input className="inp" type="date" value={inv.invoiceDate} onChange={e => update("invoiceDate",e.target.value)} /></div>
       <div><label className="label">Due Date (+15 days)</label><input className="inp" type="date" value={inv.dueDate} readOnly /></div>
     </div>
 
-    <div style={{background:"#fff",borderRadius:10,border:"1px solid #E2E8F0",overflow:"visible",marginBottom:16}}>
-      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+    <div style={{background:"#fff",borderRadius:10,border:"1px solid #E2E8F0",overflow:"auto",marginBottom:16}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:650}}>
         <thead><tr style={{background:P}}>
           <th style={{padding:"10px 8px",color:"#fff",fontSize:11,fontWeight:600,width:36}}>#</th>
           <th style={{padding:"10px 8px",color:"#fff",fontSize:11,fontWeight:600,textAlign:"left"}}>Item Description</th>
@@ -594,7 +984,12 @@ function InvForm({ inv: initial, onSave, onCancel, allInvoices }) {
     </div>
     <button className="btn btn-s" onClick={addItem}>+ Add Item</button>
 
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginTop:24}}>
+    <div style={{background:"#fff",borderRadius:10,border:"1px solid #E2E8F0",padding:20,marginTop:16}}>
+      <label className="label">Internal Notes <span style={{fontWeight:400,textTransform:"none",letterSpacing:0,color:"#94A3B8"}}>(not printed on invoice)</span></label>
+      <textarea className="inp" rows={3} placeholder="Add private notes, reminders, or context..." value={inv.notes||""} onChange={e => update("notes",e.target.value)} style={{resize:"vertical"}} />
+    </div>
+
+    <div className="form-bottom" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginTop:16}}>
       <div style={{background:"#fff",borderRadius:10,border:"1px solid #E2E8F0",padding:20}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:recOn?16:0}}>
           <div><div style={{fontWeight:700,fontSize:14,marginBottom:2}}>Recurring Invoice</div><div style={{fontSize:12,color:"#94A3B8"}}>Auto-generate on schedule</div></div>
@@ -622,14 +1017,14 @@ function InvForm({ inv: initial, onSave, onCancel, allInvoices }) {
 function Preview({ inv, onBack, onEdit, onDelete }) {
   const ci = computeItems(inv.items), totals = computeTotals(ci), hasHSN = ci.some(i => i.hsn);
   return (<>
-    <div style={{display:"flex",gap:8,marginBottom:20}}>
+    <div className="preview-actions" style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
       <button className="btn btn-o" onClick={onBack}>← Back</button>
       <button className="btn btn-s" onClick={onEdit}>Edit</button>
       <button className="btn btn-p" onClick={() => downloadPDF(inv)}>⌘P Download PDF</button>
       <button className="btn btn-d" onClick={() => { if(confirm("Delete?")) onDelete(); }}>Delete</button>
     </div>
 
-    <div style={{background:"#fff",borderRadius:12,border:"1px solid #E2E8F0",padding:"36px 40px",maxWidth:800}}>
+    <div className="preview-box" style={{background:"#fff",borderRadius:12,border:"1px solid #E2E8F0",padding:"36px 40px",maxWidth:800}}>
       <h1 style={{fontSize:28,fontWeight:700,color:P,marginBottom:12}}>Invoice</h1>
       <div style={{fontSize:13,color:"#555",marginBottom:20,lineHeight:1.8}}>
         <div><strong style={{display:"inline-block",width:100}}>Invoice No</strong>{inv.invoiceNo}</div>
@@ -637,7 +1032,7 @@ function Preview({ inv, onBack, onEdit, onDelete }) {
         <div><strong style={{display:"inline-block",width:100}}>Due Date</strong>{fmtDate(inv.dueDate)}</div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+      <div className="preview-parties" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
         {[["Billed By",BILLED_BY],["Billed To",BILLED_TO]].map(([l,e]) => <div key={l} style={{background:PL,borderRadius:6,padding:16}}>
           <div style={{color:P,fontWeight:700,fontSize:13,marginBottom:8}}>{l}</div>
           <div style={{fontWeight:700,marginBottom:4}}>{e.name}</div>
@@ -649,7 +1044,8 @@ function Preview({ inv, onBack, onEdit, onDelete }) {
 
       <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#666",padding:"8px 0",borderBottom:"1px solid #e2e2e2",marginBottom:16}}><span>Country of Supply: India</span><span>Place of Supply: Gujarat (24)</span></div>
 
-      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:20}}>
+      <div style={{overflowX:"auto",marginBottom:20}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:580}}>
         <thead><tr style={{background:P}}>
           <th style={{padding:"10px 8px",color:"#fff",fontSize:11,fontWeight:600,textAlign:"center",width:32}}></th>
           <th style={{padding:"10px 8px",color:"#fff",fontSize:11,fontWeight:600,textAlign:"left"}}>Item</th>
@@ -675,8 +1071,9 @@ function Preview({ inv, onBack, onEdit, onDelete }) {
           <td style={{padding:"10px 8px",textAlign:"right",fontWeight:600}}>₹{fmt(it.total)}</td>
         </tr>)}</tbody>
       </table>
+      </div>
 
-      <div style={{display:"flex",gap:24,marginBottom:24}}>
+      <div className="preview-summary" style={{display:"flex",gap:24,marginBottom:24}}>
         <div style={{flex:1,fontSize:11.5,color:"#444",lineHeight:1.6,paddingTop:4}}><strong>Total (in words) :</strong> {numberToWordsINR(totals.total)}</div>
         <div style={{width:260}}>
           <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:13,borderBottom:"1px solid #eee"}}><span>Amount</span><span>₹{fmt(totals.amount)}</span></div>
@@ -686,7 +1083,7 @@ function Preview({ inv, onBack, onEdit, onDelete }) {
         </div>
       </div>
 
-      <div style={{display:"flex",gap:24,marginBottom:24}}>
+      <div className="preview-bank" style={{display:"flex",gap:24,marginBottom:24}}>
         <div style={{flex:1,background:PL,borderRadius:6,padding:16}}>
           <div style={{color:P,fontWeight:700,fontSize:12,marginBottom:10}}>Bank Details</div>
           {[["Account Name",BANK.name],["Account Number",BANK.number],["IFSC",BANK.ifsc],["Account Type",BANK.type],["Bank",BANK.bank]].map(([k,v]) => <div key={k} style={{display:"flex",fontSize:12,marginBottom:3}}><span style={{width:110,color:"#888"}}>{k}</span><span style={{fontWeight:500}}>{v}</span></div>)}
@@ -711,5 +1108,10 @@ function Preview({ inv, onBack, onEdit, onDelete }) {
         <div style={{textAlign:"right"}}>Page 1 of 1</div>
       </div>
     </div>
+
+    {inv.notes && <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,padding:16,marginTop:16,maxWidth:800}}>
+      <div style={{fontSize:12,fontWeight:700,color:"#92400E",marginBottom:6,display:"flex",alignItems:"center",gap:6}}>📝 Internal Notes <span style={{fontWeight:400,fontSize:11,color:"#B45309"}}>(not on printed invoice)</span></div>
+      <div style={{fontSize:13,color:"#78350F",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{inv.notes}</div>
+    </div>}
   </>);
 }
