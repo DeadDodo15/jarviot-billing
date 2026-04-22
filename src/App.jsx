@@ -310,6 +310,10 @@ html,body,#root{height:100%}
 .mobile-header{display:none;position:sticky;top:0;z-index:100;background:#fff;border-bottom:1px solid #E2E8F0;padding:12px 16px;align-items:center;justify-content:space-between}
 .hamburger{background:none;border:none;font-size:22px;cursor:pointer;padding:4px 8px;color:#64748B}
 .sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:199}
+.todo-split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.todo-form-grid{display:grid;gap:10px;margin-bottom:10px}
+.todo-form-grid.tasks{grid-template-columns:1fr 2fr 1fr 1fr}
+.todo-form-grid.questions{grid-template-columns:1fr 2fr 1fr 1fr 1fr}
 @media(max-width:768px){
   .app{flex-direction:column;height:auto;min-height:100vh}
   .mobile-header{display:flex}
@@ -332,10 +336,14 @@ html,body,#root{height:100%}
   .preview-bank{flex-direction:column}
   .folder-inv{margin-left:24px}
   .folder-month{margin-left:12px}
+  .todo-split{grid-template-columns:1fr}
+  .todo-form-grid.tasks{grid-template-columns:1fr}
+  .todo-form-grid.questions{grid-template-columns:1fr}
 }
 @media(max-width:480px){
   .cards{grid-template-columns:1fr 1fr;gap:8px}
   .btn{padding:7px 12px;font-size:12px}
+  .todo-actions .btn{flex:1;justify-content:center}
 }
 `;
 
@@ -686,7 +694,7 @@ function TodoDashboard({ todos }) {
       <div className="card"><div className="card-label">Stale Questions</div><div className="card-val" style={{color:"#B45309"}}>{staleQuestions.length}</div></div>
     </div>
 
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+    <div className="todo-split">
       <div className="card" style={{padding:0}}>
         <div style={{padding:"14px 16px",borderBottom:"1px solid #E2E8F0",fontWeight:700}}>Recent Tasks</div>
         {recentTasks.length === 0 ? <div style={{padding:16,color:"#94A3B8",fontSize:13}}>No tasks yet</div> : recentTasks.map(t => (
@@ -746,7 +754,7 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
     <div className="page-sub">Required: ticker. Optional: kind, due date, notes.</div>
 
     <div className="card" style={{marginBottom:16}}>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 2fr 1fr 1fr",gap:10,marginBottom:10}}>
+      <div className="todo-form-grid tasks">
         <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
         <input className="inp" placeholder="Task text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
         <input className="inp" placeholder="Kind (concall/model/note)" value={form.kind} onChange={e => setForm(prev => ({ ...prev, kind: e.target.value }))} />
@@ -756,7 +764,7 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
       <button className="btn btn-p" onClick={handleCreate}>Add Task</button>
     </div>
 
-    <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+    <div className="todo-actions" style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
       {["open", "completed", "all"].map(f => <button key={f} className={`btn ${filter===f?"btn-p":"btn-o"}`} style={{textTransform:"capitalize"}} onClick={() => setFilter(f)}>{f}</button>)}
       <input className="inp" style={{maxWidth:180}} placeholder="Filter ticker" value={tickerFilter} onChange={e => setTickerFilter(e.target.value)} />
       <select className="inp" style={{maxWidth:180}} value={kindFilter} onChange={e => setKindFilter(e.target.value)}>
@@ -820,7 +828,7 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
     <div className="page-sub">Capture unknowns quickly. Status can be open, resolved, or stale.</div>
 
     <div className="card" style={{marginBottom:16}}>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr",gap:10,marginBottom:10}}>
+      <div className="todo-form-grid questions">
         <input className="inp" placeholder="Ticker (or -)" value={form.ticker} onChange={e => setForm(prev => ({ ...prev, ticker: e.target.value }))} />
         <input className="inp" placeholder="Question text" value={form.text} onChange={e => setForm(prev => ({ ...prev, text: e.target.value }))} />
         <input className="inp" placeholder="Kind (optional)" value={form.kind} onChange={e => setForm(prev => ({ ...prev, kind: e.target.value }))} />
@@ -834,7 +842,7 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
       <button className="btn btn-p" onClick={handleCreate}>Add Question</button>
     </div>
 
-    <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+    <div className="todo-actions" style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
       {["open", "resolved", "stale", "all"].map(f => <button key={f} className={`btn ${statusFilter===f?"btn-p":"btn-o"}`} style={{textTransform:"capitalize"}} onClick={() => setStatusFilter(f)}>{f}</button>)}
       <input className="inp" style={{maxWidth:240}} placeholder="Search questions" value={search} onChange={e => setSearch(e.target.value)} />
     </div>
