@@ -76,6 +76,10 @@ function emptyInvoice(invoices) {
   return { id: uid(), invoiceNo: suggestInvoiceNo(today, invoices), invoiceDate: today, dueDate: addDays(today, 15), items: [emptyItem()], status: "draft", recurring: null, notes: "", createdAt: new Date().toISOString() };
 }
 
+function emptySubtask(text = "") {
+  return { id: uid(), text, status: "open", createdAt: new Date().toISOString(), completedAt: null };
+}
+
 function emptyTask() {
   return {
     id: uid(),
@@ -85,6 +89,7 @@ function emptyTask() {
     dueDate: "",
     notes: "",
     status: "open",
+    subtasks: [],
     createdAt: new Date().toISOString(),
     completedAt: null,
   };
@@ -104,6 +109,7 @@ function emptyQuestion() {
 }
 
 function normalizeTask(t) {
+  const rawSubs = Array.isArray(t?.subtasks) ? t.subtasks : [];
   return {
     id: t?.id || uid(),
     ticker: t?.ticker || "",
@@ -112,6 +118,13 @@ function normalizeTask(t) {
     dueDate: t?.dueDate || "",
     notes: t?.notes || "",
     status: t?.status === "completed" ? "completed" : "open",
+    subtasks: rawSubs.map(s => ({
+      id: s?.id || uid(),
+      text: s?.text || "",
+      status: s?.status === "completed" ? "completed" : "open",
+      createdAt: s?.createdAt || new Date().toISOString(),
+      completedAt: s?.completedAt || null,
+    })),
     createdAt: t?.createdAt || new Date().toISOString(),
     completedAt: t?.completedAt || null,
   };
@@ -314,6 +327,14 @@ html,body,#root{height:100%}
 .todo-form-grid{display:grid;gap:10px;margin-bottom:10px}
 .todo-form-grid.tasks{grid-template-columns:1fr 2fr 1fr 1fr}
 .todo-form-grid.questions{grid-template-columns:1fr 2fr 1fr 1fr 1fr}
+.subtask-panel{background:#F8FAFC;border-top:1px solid #E2E8F0;padding:12px 16px}
+.subtask-item{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #F1F5F9}
+.subtask-item:last-of-type{border-bottom:none}
+.subtask-check{width:16px;height:16px;accent-color:${P};cursor:pointer;flex-shrink:0}
+.subtask-text{font-size:13px;flex:1;color:#1a1a2e}
+.subtask-text.done{text-decoration:line-through;color:#94A3B8}
+.subtask-add{display:flex;gap:8px;margin-top:10px}
+.subtask-progress{display:inline-flex;align-items:center;gap:4px;background:#EDE9FE;color:#6D28D9;border-radius:99px;font-size:11px;font-weight:700;padding:2px 8px;margin-left:6px}
 @media(max-width:768px){
   .app{flex-direction:column;height:auto;min-height:100vh}
   .mobile-header{display:flex}
@@ -723,6 +744,8 @@ function TodoDashboard({ todos }) {
 function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
   const [form, setForm] = useState(emptyTask());
   const [editingId, setEditingId] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [subtaskInputs, setSubtaskInputs] = useState({}); // taskId → text
   const [filter, setFilter] = useState("open");
   const [tickerFilter, setTickerFilter] = useState("");
   const [kindFilter, setKindFilter] = useState("");
@@ -744,7 +767,7 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
 
   const startEdit = (t) => {
     setEditingId(t.id);
-    setForm({ ...t });
+    setForm({ ...t, subtasks: t.subtasks || [] });
     formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -758,11 +781,32 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
     setForm(emptyTask());
   };
 
+  // Subtask helpers — mutate a copy of the task and call onSaveTask
+  const addSubtask = (task, text) => {
+    if (!text.trim()) return;
+    const updated = { ...task, subtasks: [...(task.subtasks || []), emptySubtask(text.trim())] };
+    onSaveTask(updated);
+    setSubtaskInputs(prev => ({ ...prev, [task.id]: "" }));
+  };
+
+  const toggleSubtask = (task, subId) => {
+    const subtasks = (task.subtasks || []).map(s => {
+      if (s.id !== subId) return s;
+      const done = s.status !== "completed";
+      return { ...s, status: done ? "completed" : "open", completedAt: done ? new Date().toISOString() : null };
+    });
+    onSaveTask({ ...task, subtasks });
+  };
+
+  const deleteSubtask = (task, subId) => {
+    onSaveTask({ ...task, subtasks: (task.subtasks || []).filter(s => s.id !== subId) });
+  };
+
   const today = new Date().toISOString().split("T")[0];
 
   return (<>
     <div className="page-title">Tasks</div>
-    <div className="page-sub">Required: ticker. Optional: kind, due date, notes.</div>
+    <div className="page-sub">Required: ticker. Optional: kind, due date, notes, subtasks.</div>
 
     <div ref={formRef} className="card" style={{marginBottom:16,border: editingId ? `2px solid ${P}` : "1px solid #E2E8F0"}}>
       {editingId && <div style={{fontSize:12,fontWeight:600,color:P,marginBottom:10}}>✎ Editing task — make changes below then click Update</div>}
@@ -788,25 +832,72 @@ function TodoTasks({ tasks, onSaveTask, onToggleTask, onDeleteTask }) {
       </select>
     </div>
 
-    <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Ticker</th><th>Task</th><th>Kind</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>{filtered.length === 0 ? <tr><td colSpan={6} style={{textAlign:"center",padding:36,color:"#94A3B8"}}>No tasks found</td></tr> :
-        filtered.map(t => {
+    <div className="tbl-wrap"><table className="tbl"><thead><tr><th></th><th>Ticker</th><th>Task</th><th>Kind</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>{filtered.length === 0 ? <tr><td colSpan={7} style={{textAlign:"center",padding:36,color:"#94A3B8"}}>No tasks found</td></tr> :
+        filtered.flatMap(t => {
           const overdue = t.status !== "completed" && t.dueDate && t.dueDate < today;
-          return <tr key={t.id}>
-            <td style={{fontWeight:700}}>{t.ticker || "-"}</td>
-            <td>
-              <div style={{fontWeight:600,fontSize:13}}>{t.text}</div>
-              {t.notes ? <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{t.notes}</div> : null}
-            </td>
-            <td>{t.kind || "-"}</td>
-            <td style={{color:overdue ? "#DC2626" : "inherit",fontWeight:overdue ? 700 : 500}}>{t.dueDate ? fmtDate(t.dueDate) : "-"}</td>
-            <td><span className={`badge ${t.status === "completed" ? "badge-paid" : "badge-finalized"}`}>{t.status}</span></td>
-            <td style={{whiteSpace:"nowrap"}}>
-              <button className="btn btn-s" style={{marginRight:6}} onClick={() => startEdit(t)}>Edit</button>
-              <button className="btn btn-s" style={{marginRight:6}} onClick={() => onToggleTask(t.id)}>{t.status === "completed" ? "Reopen" : "Done"}</button>
-              <button className="btn btn-d" onClick={() => { if (confirm("Delete this task?")) onDeleteTask(t.id); }}>✕</button>
-            </td>
-          </tr>;
+          const subs = t.subtasks || [];
+          const doneSubs = subs.filter(s => s.status === "completed").length;
+          const isExpanded = expandedId === t.id;
+          const rows = [];
+
+          rows.push(
+            <tr key={t.id} style={{background: isExpanded ? "#FAFBFC" : ""}}>
+              <td style={{width:28,textAlign:"center",padding:"12px 4px"}}>
+                <button onClick={() => setExpandedId(isExpanded ? null : t.id)}
+                  style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:"#64748B",padding:2,lineHeight:1}}>
+                  {subs.length > 0 ? (isExpanded ? "▾" : "▸") : "·"}
+                </button>
+              </td>
+              <td style={{fontWeight:700}}>{t.ticker || "-"}</td>
+              <td>
+                <div style={{fontWeight:600,fontSize:13}}>
+                  {t.text}
+                  {subs.length > 0 && <span className="subtask-progress">{doneSubs}/{subs.length}</span>}
+                </div>
+                {t.notes ? <div style={{fontSize:12,color:"#64748B",marginTop:2}}>{t.notes}</div> : null}
+              </td>
+              <td>{t.kind || "-"}</td>
+              <td style={{color:overdue ? "#DC2626" : "inherit",fontWeight:overdue ? 700 : 500}}>{t.dueDate ? fmtDate(t.dueDate) : "-"}</td>
+              <td><span className={`badge ${t.status === "completed" ? "badge-paid" : "badge-finalized"}`}>{t.status}</span></td>
+              <td style={{whiteSpace:"nowrap"}}>
+                <button className="btn btn-s" style={{marginRight:6}} onClick={() => startEdit(t)}>Edit</button>
+                <button className="btn btn-s" style={{marginRight:6}} onClick={() => onToggleTask(t.id)}>{t.status === "completed" ? "Reopen" : "Done"}</button>
+                <button className="btn btn-d" onClick={() => { if (confirm("Delete this task?")) onDeleteTask(t.id); }}>✕</button>
+              </td>
+            </tr>
+          );
+
+          if (isExpanded) {
+            rows.push(
+              <tr key={`${t.id}-subs`}>
+                <td colSpan={7} style={{padding:0}}>
+                  <div className="subtask-panel">
+                    <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>Subtasks</div>
+                    {subs.length === 0 && <div style={{fontSize:13,color:"#94A3B8",marginBottom:8}}>No subtasks yet — add one below.</div>}
+                    {subs.map(s => (
+                      <div key={s.id} className="subtask-item">
+                        <input type="checkbox" className="subtask-check" checked={s.status === "completed"} onChange={() => toggleSubtask(t, s.id)} />
+                        <span className={`subtask-text ${s.status === "completed" ? "done" : ""}`}>{s.text}</span>
+                        <button onClick={() => deleteSubtask(t, s.id)}
+                          style={{background:"none",border:"none",cursor:"pointer",color:"#CBD5E1",fontSize:14,padding:"0 4px",lineHeight:1,flexShrink:0}}
+                          title="Remove subtask">✕</button>
+                      </div>
+                    ))}
+                    <div className="subtask-add">
+                      <input className="inp" placeholder="Add subtask…" value={subtaskInputs[t.id] || ""}
+                        onChange={e => setSubtaskInputs(prev => ({ ...prev, [t.id]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter") addSubtask(t, subtaskInputs[t.id] || ""); }}
+                        style={{fontSize:13}} />
+                      <button className="btn btn-s" onClick={() => addSubtask(t, subtaskInputs[t.id] || "")}>Add</button>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            );
+          }
+
+          return rows;
         })}
       </tbody>
     </table></div>
