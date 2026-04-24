@@ -161,19 +161,13 @@ function finalizeTicker(value) {
 
 /* ───────── TRACKER helpers ───────── */
 const DEFAULT_ROUTINES = [
-  { id: "volume_shockers",       label: "Volume Shockers",         freq: "daily", lagDays: 1 },
-  { id: "price_market_data",     label: "Price and Market Data",   freq: "daily", lagDays: 1 },
-  { id: "corp_announcements",    label: "Corporate Announcements", freq: "daily", lagDays: 1 },
-  { id: "bulk_insider_deals",    label: "Bulk and Insider Deals",  freq: "daily", lagDays: 1 },
-  { id: "expert_calls",          label: "Expert Calls",            freq: "weekly", lagDays: 0 },
-  { id: "magazine",              label: "Magazine",                freq: "weekly", lagDays: 0 },
+  { id: "volume_shockers",       label: "Volume Shockers",         freq: "daily" },
+  { id: "price_market_data",     label: "Price and Market Data",   freq: "daily" },
+  { id: "corp_announcements",    label: "Corporate Announcements", freq: "daily" },
+  { id: "bulk_insider_deals",    label: "Bulk and Insider Deals",  freq: "daily" },
+  { id: "expert_calls",          label: "Expert Calls",            freq: "weekly" },
+  { id: "magazine",              label: "Magazine",                freq: "weekly" },
 ];
-
-function dateShift(baseDate, days) {
-  const d = new Date(baseDate + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split("T")[0];
-}
 
 function normalizeTracker(raw) {
   const logs = (raw?.routines?.logs && typeof raw.routines.logs === "object" && !Array.isArray(raw.routines.logs))
@@ -183,7 +177,6 @@ function normalizeTracker(raw) {
     id: r?.id || `routine_${idx}_${Math.random().toString(36).slice(2, 7)}`,
     label: r?.label || "Untitled Routine",
     freq: r?.freq === "weekly" ? "weekly" : "daily",
-    lagDays: Number.isFinite(Number(r?.lagDays)) ? Math.max(0, Number(r.lagDays)) : ((r?.freq === "weekly") ? 0 : 1),
   }));
   const seasons = Array.isArray(raw?.seasons)
     ? raw.seasons.map(s => ({
@@ -1092,12 +1085,11 @@ function Tracker({ tracker, onSave }) {
   const [selectedLogDate, setSelectedLogDate] = useState(today);
   const [newRoutineLabel, setNewRoutineLabel] = useState("");
   const [newRoutineFreq, setNewRoutineFreq] = useState("daily");
-  const [newRoutineLag, setNewRoutineLag] = useState(1);
 
   /* ── helpers ── */
-  const targetDateFor = (routine) => dateShift(selectedLogDate, -Number(routine.lagDays || 0));
+  const targetDateFor = () => selectedLogDate;
   const isLoggedForSelected = (routine) => {
-    const targetDate = targetDateFor(routine);
+    const targetDate = targetDateFor();
     return (logs[targetDate] || []).includes(routine.id);
   };
 
@@ -1106,7 +1098,7 @@ function Tracker({ tracker, onSave }) {
   };
 
   const toggleRoutine = (routine) => {
-    const targetDate = targetDateFor(routine);
+    const targetDate = targetDateFor();
     const dayLogs = logs[targetDate] ? [...logs[targetDate]] : [];
     const next = dayLogs.includes(routine.id)
       ? dayLogs.filter(r => r !== routine.id)
@@ -1117,19 +1109,16 @@ function Tracker({ tracker, onSave }) {
 
   const addRoutine = () => {
     if (!newRoutineLabel.trim()) return;
-    const cleanLag = newRoutineFreq === "daily" ? Math.max(0, Number(newRoutineLag) || 0) : 0;
     const nextRoutines = [
       ...routines,
       {
         id: `routine_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         label: newRoutineLabel.trim(),
         freq: newRoutineFreq,
-        lagDays: cleanLag,
       },
     ];
     setNewRoutineLabel("");
     setNewRoutineFreq("daily");
-    setNewRoutineLag(1);
     saveTracker(logs, seasons, nextRoutines);
   };
 
@@ -1242,7 +1231,7 @@ function Tracker({ tracker, onSave }) {
       <div style={{fontWeight:700,fontSize:14,marginBottom:8}}>Log Date</div>
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
         <input className="inp" style={{maxWidth:190}} type="date" value={selectedLogDate} onChange={e => setSelectedLogDate(e.target.value || today)} />
-        <span style={{fontSize:12,color:"#64748B"}}>Daily routines with lag 1 will log for {fmtDate(dateShift(selectedLogDate, -1))}.</span>
+        <span style={{fontSize:12,color:"#64748B"}}>You are logging exactly for {fmtDate(selectedLogDate)}.</span>
       </div>
     </div>
 
@@ -1253,7 +1242,7 @@ function Tracker({ tracker, onSave }) {
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
         {routines.map(r => {
           const done = isLoggedForSelected(r);
-          const targetDate = targetDateFor(r);
+          const targetDate = targetDateFor();
           return (
             <div key={r.id} onClick={() => toggleRoutine(r)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${done?"#10B981":"#E2E8F0"}`,background:done?"#F0FDF4":"#fff",cursor:"pointer",transition:"all .15s",userSelect:"none"}}>
               <div style={{width:22,height:22,borderRadius:6,background:done?"#10B981":"#E2E8F0",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"background .15s"}}>
@@ -1261,7 +1250,7 @@ function Tracker({ tracker, onSave }) {
               </div>
               <div style={{flex:1}}>
                 <div style={{fontWeight:600,fontSize:13,color:done?"#065F46":"#1a1a2e"}}>{r.label}</div>
-                <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>Logs to: {fmtDate(targetDate)}{Number(r.lagDays||0) > 0 ? ` (T-${Number(r.lagDays)})` : ""}</div>
+                <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>Logs to: {fmtDate(targetDate)}</div>
               </div>
               <span style={{fontSize:11,color:"#94A3B8",textTransform:"uppercase",letterSpacing:".4px"}}>{r.freq}</span>
               <button className="btn btn-d" style={{padding:"4px 8px",fontSize:11}} onClick={e => { e.stopPropagation(); removeRoutine(r.id); }}>✕</button>
@@ -1273,20 +1262,14 @@ function Tracker({ tracker, onSave }) {
 
     <div className="card" style={{marginBottom:24}}>
       <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>Add Routine</div>
-      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr auto",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr auto",gap:8}}>
         <input className="inp" placeholder="Routine name" value={newRoutineLabel} onChange={e => setNewRoutineLabel(e.target.value)} />
-        <select className="inp" value={newRoutineFreq} onChange={e => {
-          const freq = e.target.value;
-          setNewRoutineFreq(freq);
-          if (freq === "weekly") setNewRoutineLag(0);
-        }}>
+        <select className="inp" value={newRoutineFreq} onChange={e => setNewRoutineFreq(e.target.value)}>
           <option value="daily">daily</option>
           <option value="weekly">weekly</option>
         </select>
-        <input className="inp" type="number" min="0" step="1" value={newRoutineLag} onChange={e => setNewRoutineLag(Math.max(0, Number(e.target.value) || 0))} disabled={newRoutineFreq === "weekly"} placeholder="Lag days" />
         <button className="btn btn-p" onClick={addRoutine}>+ Add</button>
       </div>
-      <div style={{fontSize:11,color:"#94A3B8",marginTop:8}}>Lag days means when you log on date D, it marks work date D - lag.</div>
     </div>
 
     {/* ── Heatmap ── */}
