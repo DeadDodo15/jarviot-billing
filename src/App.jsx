@@ -159,6 +159,37 @@ function finalizeTicker(value) {
   return value.trim().toUpperCase() || "-";
 }
 
+/* ───────── TRACKER helpers ───────── */
+const ROUTINES = [
+  { id: "announcements", label: "Corporate Announcements", freq: "daily" },
+  { id: "bulk_deals",    label: "Bulk / Block Deals",      freq: "daily" },
+  { id: "shareholding",  label: "Shareholding Changes",    freq: "daily" },
+  { id: "sector_read",   label: "Sector Reading",          freq: "weekly" },
+  { id: "portfolio_rev", label: "Portfolio Review",        freq: "weekly" },
+];
+
+function normalizeTracker(raw) {
+  const logs = (raw?.routines?.logs && typeof raw.routines.logs === "object" && !Array.isArray(raw.routines.logs))
+    ? raw.routines.logs : {};
+  const seasons = Array.isArray(raw?.seasons)
+    ? raw.seasons.map(s => ({
+        id: s?.id || uid(),
+        name: s?.name || "Unnamed Season",
+        active: s?.active !== false,
+        companies: Array.isArray(s?.companies) ? s.companies.map(c => ({
+          id: c?.id || uid(),
+          ticker: c?.ticker || "-",
+          resultsRead: !!c?.resultsRead,
+          concallRead: !!c?.concallRead,
+          deckRead: !!c?.deckRead,
+          date: c?.date || "",
+          note: c?.note || "",
+        })) : [],
+      }))
+    : [];
+  return { routines: { logs }, seasons };
+}
+
 function normalizeData(raw) {
   const invoices = Array.isArray(raw?.invoices) ? raw.invoices : [];
   const tasksRaw = Array.isArray(raw?.todos?.tasks) ? raw.todos.tasks : [];
@@ -169,6 +200,7 @@ function normalizeData(raw) {
       tasks: tasksRaw.map(normalizeTask),
       questions: questionsRaw.map(normalizeQuestion),
     },
+    tracker: normalizeTracker(raw?.tracker),
   };
 }
 
@@ -528,6 +560,10 @@ export default function InvoiceApp() {
     save({ ...data, todos: { ...data.todos, questions: data.todos.questions.filter(q => q.id !== id) } });
   };
 
+  const saveTracker = (tracker) => {
+    save({ ...data, tracker: normalizeTracker(tracker) });
+  };
+
   const handleImport = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -546,7 +582,7 @@ export default function InvoiceApp() {
   };
 
   const billingNav = [["billing-dashboard","◫","Dashboard"],["billing-list","☰","All Invoices"],["billing-folder","⊞","Folder"],["billing-recurring","↻","Recurring"]];
-  const todoNav = [["todo-dashboard","◫","Overview"],["todo-tasks","✓","Tasks"],["todo-questions","?","Questions"]];
+  const todoNav = [["todo-dashboard","◫","Overview"],["todo-tasks","✓","Tasks"],["todo-questions","?","Questions"],["todo-tracker","⬡","Tracker"]];
 
   // Loading state
   if (user === undefined) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:BG,fontFamily:"'DM Sans',sans-serif",color:"#94A3B8"}}>Loading...</div>;
@@ -596,6 +632,7 @@ export default function InvoiceApp() {
         {view === "todo-dashboard" && <TodoDashboard todos={data.todos} />}
         {view === "todo-tasks" && <TodoTasks tasks={data.todos.tasks} onSaveTask={saveTask} onToggleTask={toggleTask} onDeleteTask={deleteTask} />}
         {view === "todo-questions" && <TodoQuestions questions={data.todos.questions} onSaveQuestion={saveQuestion} onSetQuestionStatus={setQuestionStatus} onDeleteQuestion={deleteQuestion} />}
+        {view === "todo-tracker" && <Tracker tracker={data.tracker} onSave={saveTracker} />}
       </div>
     </div>
   );
@@ -1027,6 +1064,276 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
         </tr>)}
       </tbody>
     </table></div>
+  </>);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TRACKER
+   ═══════════════════════════════════════════════════════════════ */
+function Tracker({ tracker, onSave }) {
+  const today = new Date().toISOString().split("T")[0];
+  const logs = tracker.routines.logs;
+  const seasons = tracker.seasons;
+
+  /* ── helpers ── */
+  const isLoggedToday = (routineId) => (logs[today] || []).includes(routineId);
+
+  const toggleRoutine = (routineId) => {
+    const todayLogs = logs[today] ? [...logs[today]] : [];
+    const next = todayLogs.includes(routineId)
+      ? todayLogs.filter(r => r !== routineId)
+      : [...todayLogs, routineId];
+    const newLogs = { ...logs, [today]: next };
+    onSave({ routines: { logs: newLogs }, seasons });
+  };
+
+  /* ── heatmap: last 16 weeks = 112 days ── */
+  const heatmapDays = (() => {
+    const days = [];
+    for (let i = 111; i >= 0; i--) {
+      const d = new Date(today + "T00:00:00");
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().split("T")[0]);
+    }
+    return days;
+  })();
+
+  const heatmapIntensity = (date) => {
+    const done = (logs[date] || []).length;
+    const total = ROUTINES.length;
+    if (done === 0) return 0;
+    if (done / total <= 0.33) return 1;
+    if (done / total <= 0.66) return 2;
+    return 3;
+  };
+
+  const heatColors = ["#E2E8F0", "#C4B5FD", "#8B5CF6", P];
+
+  /* ── season helpers ── */
+  const [newSeasonName, setNewSeasonName] = useState("");
+  const [expandedSeason, setExpandedSeason] = useState(null);
+  const [tickerInputs, setTickerInputs] = useState({});
+
+  const addSeason = () => {
+    if (!newSeasonName.trim()) return;
+    const updated = [...seasons, { id: uid(), name: newSeasonName.trim(), active: true, companies: [] }];
+    setNewSeasonName("");
+    onSave({ routines: { logs }, seasons: updated });
+  };
+
+  const deleteSeason = (id) => {
+    onSave({ routines: { logs }, seasons: seasons.filter(s => s.id !== id) });
+  };
+
+  const toggleSeasonActive = (id) => {
+    const updated = seasons.map(s => s.id === id ? { ...s, active: !s.active } : s);
+    onSave({ routines: { logs }, seasons: updated });
+  };
+
+  const addCompany = (seasonId) => {
+    const ticker = (tickerInputs[seasonId] || "").trim().toUpperCase();
+    if (!ticker) return;
+    const updated = seasons.map(s => {
+      if (s.id !== seasonId) return s;
+      return { ...s, companies: [...s.companies, { id: uid(), ticker, resultsRead: false, concallRead: false, deckRead: false, date: today, note: "" }] };
+    });
+    setTickerInputs(prev => ({ ...prev, [seasonId]: "" }));
+    onSave({ routines: { logs }, seasons: updated });
+  };
+
+  const updateCompany = (seasonId, compId, patch) => {
+    const updated = seasons.map(s => {
+      if (s.id !== seasonId) return s;
+      return { ...s, companies: s.companies.map(c => c.id === compId ? { ...c, ...patch } : c) };
+    });
+    onSave({ routines: { logs }, seasons: updated });
+  };
+
+  const deleteCompany = (seasonId, compId) => {
+    const updated = seasons.map(s => {
+      if (s.id !== seasonId) return s;
+      return { ...s, companies: s.companies.filter(c => c.id !== compId) };
+    });
+    onSave({ routines: { logs }, seasons: updated });
+  };
+
+  /* ── streak ── */
+  const dailyRoutines = ROUTINES.filter(r => r.freq === "daily");
+  const calcStreak = () => {
+    let streak = 0;
+    const d = new Date(today + "T00:00:00");
+    while (true) {
+      const key = d.toISOString().split("T")[0];
+      const done = (logs[key] || []).filter(id => dailyRoutines.some(r => r.id === id)).length;
+      if (done === 0) break;
+      streak++;
+      d.setDate(d.getDate() - 1);
+    }
+    return streak;
+  };
+  const streak = calcStreak();
+
+  return (<>
+    <div className="page-title">Tracker</div>
+    <div className="page-sub">Daily routines, consistency heatmap, and seasonal research logs.</div>
+
+    {/* ── Stats row ── */}
+    <div className="cards" style={{gridTemplateColumns:"repeat(3,1fr)",marginBottom:24}}>
+      <div className="card"><div className="card-label">Today's Routines</div><div className="card-val" style={{color:P}}>{(logs[today]||[]).length} / {ROUTINES.length}</div></div>
+      <div className="card"><div className="card-label">Daily Streak</div><div className="card-val" style={{color:streak>0?"#10B981":"#94A3B8"}}>{streak} day{streak!==1?"s":""}</div></div>
+      <div className="card"><div className="card-label">Active Seasons</div><div className="card-val" style={{color:"#8B5CF6"}}>{seasons.filter(s=>s.active).length}</div></div>
+    </div>
+
+    {/* ── Routines check-in ── */}
+    <div className="card" style={{marginBottom:24}}>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>Today's Routines — {fmtDate(today)}</div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {ROUTINES.map(r => {
+          const done = isLoggedToday(r.id);
+          return (
+            <div key={r.id} onClick={() => toggleRoutine(r.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${done?"#10B981":"#E2E8F0"}`,background:done?"#F0FDF4":"#fff",cursor:"pointer",transition:"all .15s",userSelect:"none"}}>
+              <div style={{width:22,height:22,borderRadius:6,background:done?"#10B981":"#E2E8F0",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"background .15s"}}>
+                {done && <span style={{color:"#fff",fontSize:13,fontWeight:700}}>✓</span>}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13,color:done?"#065F46":"#1a1a2e"}}>{r.label}</div>
+              </div>
+              <span style={{fontSize:11,color:"#94A3B8",textTransform:"uppercase",letterSpacing:".4px"}}>{r.freq}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+
+    {/* ── Heatmap ── */}
+    <div className="card" style={{marginBottom:24,overflowX:"auto"}}>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>Consistency — Last 16 Weeks</div>
+      <div style={{display:"flex",gap:3,flexWrap:"nowrap",minWidth:"fit-content"}}>
+        {(() => {
+          // Group into weeks (columns of 7)
+          const weeks = [];
+          for (let i = 0; i < heatmapDays.length; i += 7) {
+            weeks.push(heatmapDays.slice(i, i + 7));
+          }
+          return weeks.map((week, wi) => (
+            <div key={wi} style={{display:"flex",flexDirection:"column",gap:3}}>
+              {week.map(d => {
+                const intensity = heatmapIntensity(d);
+                const count = (logs[d] || []).length;
+                return (
+                  <div key={d} title={`${d}: ${count}/${ROUTINES.length} routines`}
+                    style={{width:14,height:14,borderRadius:3,background:heatColors[intensity],cursor:"default",transition:"background .15s"}} />
+                );
+              })}
+            </div>
+          ));
+        })()}
+      </div>
+      <div style={{display:"flex",gap:6,alignItems:"center",marginTop:10,fontSize:11,color:"#94A3B8"}}>
+        <span>Less</span>
+        {heatColors.map((c, i) => <div key={i} style={{width:12,height:12,borderRadius:2,background:c}} />)}
+        <span>More</span>
+      </div>
+    </div>
+
+    {/* ── Research Seasons ── */}
+    <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>Research Seasons</div>
+
+    {/* Add season */}
+    <div style={{display:"flex",gap:8,marginBottom:16}}>
+      <input className="inp" style={{maxWidth:320}} placeholder="New season name (e.g. Q4 FY26 Results)" value={newSeasonName} onChange={e => setNewSeasonName(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") addSeason(); }} />
+      <button className="btn btn-p" onClick={addSeason}>+ Add Season</button>
+    </div>
+
+    {seasons.length === 0 && <div style={{color:"#94A3B8",fontSize:13,marginBottom:24}}>No seasons yet. Add one above.</div>}
+
+    {seasons.map(season => {
+      const isOpen = expandedSeason === season.id;
+      const done = season.companies.filter(c => c.resultsRead && c.concallRead && c.deckRead).length;
+      return (
+        <div key={season.id} className="card" style={{marginBottom:14,padding:0,border:`1.5px solid ${season.active?P:"#E2E8F0"}`}}>
+          {/* Season header */}
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",cursor:"pointer"}} onClick={() => setExpandedSeason(isOpen ? null : season.id)}>
+            <span style={{fontSize:14,color:P,fontWeight:700}}>{isOpen?"▾":"▸"}</span>
+            <div style={{flex:1}}>
+              <span style={{fontWeight:700,fontSize:14}}>{season.name}</span>
+              <span style={{fontSize:12,color:"#94A3B8",marginLeft:10}}>{season.companies.length} companies · {done} fully done</span>
+            </div>
+            <span style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:99,background:season.active?"#EDE9FE":"#F1F5F9",color:season.active?P:"#94A3B8"}}>{season.active?"Active":"Archived"}</span>
+            <button className="btn btn-o" style={{fontSize:11,padding:"4px 8px"}} onClick={e => { e.stopPropagation(); toggleSeasonActive(season.id); }}>{season.active?"Archive":"Activate"}</button>
+            <button className="btn btn-d" style={{fontSize:11,padding:"4px 8px"}} onClick={e => { e.stopPropagation(); if(confirm("Delete this season?")) deleteSeason(season.id); }}>✕</button>
+          </div>
+
+          {isOpen && (
+            <div style={{borderTop:"1px solid #E2E8F0",padding:"14px 16px"}}>
+              {/* Add company */}
+              <div style={{display:"flex",gap:8,marginBottom:14}}>
+                <input className="inp" style={{maxWidth:180}} placeholder="Add ticker (e.g. BAJAJCON)"
+                  value={tickerInputs[season.id] || ""}
+                  onChange={e => setTickerInputs(prev => ({...prev,[season.id]:e.target.value}))}
+                  onKeyDown={e => { if (e.key === "Enter") addCompany(season.id); }} />
+                <button className="btn btn-s" onClick={() => addCompany(season.id)}>+ Add Company</button>
+              </div>
+
+              {season.companies.length === 0 && <div style={{color:"#94A3B8",fontSize:13,marginBottom:8}}>No companies yet — add a ticker above.</div>}
+
+              {/* Company table */}
+              {season.companies.length > 0 && (
+                <div className="tbl-wrap">
+                  <table className="tbl">
+                    <thead>
+                      <tr>
+                        <th>Ticker</th>
+                        <th style={{textAlign:"center"}}>Results</th>
+                        <th style={{textAlign:"center"}}>Concall</th>
+                        <th style={{textAlign:"center"}}>Deck</th>
+                        <th>Date</th>
+                        <th>Note</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {season.companies.map(c => {
+                        const allDone = c.resultsRead && c.concallRead && c.deckRead;
+                        return (
+                          <tr key={c.id} style={{background: allDone ? "#F0FDF4" : ""}}>
+                            <td style={{fontWeight:700,color:allDone?"#065F46":P}}>{c.ticker}</td>
+                            <td style={{textAlign:"center"}}>
+                              <input type="checkbox" style={{width:16,height:16,accentColor:P,cursor:"pointer"}}
+                                checked={c.resultsRead} onChange={e => updateCompany(season.id, c.id, {resultsRead: e.target.checked})} />
+                            </td>
+                            <td style={{textAlign:"center"}}>
+                              <input type="checkbox" style={{width:16,height:16,accentColor:P,cursor:"pointer"}}
+                                checked={c.concallRead} onChange={e => updateCompany(season.id, c.id, {concallRead: e.target.checked})} />
+                            </td>
+                            <td style={{textAlign:"center"}}>
+                              <input type="checkbox" style={{width:16,height:16,accentColor:P,cursor:"pointer"}}
+                                checked={c.deckRead} onChange={e => updateCompany(season.id, c.id, {deckRead: e.target.checked})} />
+                            </td>
+                            <td>
+                              <input type="date" className="inp" style={{fontSize:12,padding:"4px 8px",minWidth:130}}
+                                value={c.date} onChange={e => updateCompany(season.id, c.id, {date: e.target.value})} />
+                            </td>
+                            <td>
+                              <input className="inp" style={{fontSize:12,padding:"4px 8px",minWidth:140}} placeholder="Quick note…"
+                                value={c.note} onChange={e => updateCompany(season.id, c.id, {note: e.target.value})} />
+                            </td>
+                            <td>
+                              <button className="btn btn-d" style={{padding:"4px 8px",fontSize:11}} onClick={() => deleteCompany(season.id, c.id)}>✕</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    })}
   </>);
 }
 

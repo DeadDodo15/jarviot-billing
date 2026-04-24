@@ -14,7 +14,7 @@ service cloud.firestore {
       // Limit write: must be owner, expected top-level shape only.
       allow write: if request.auth != null
         && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['invoices', 'todos'])
+        && request.resource.data.keys().hasOnly(['invoices', 'todos', 'tracker'])
         && request.resource.data.invoices is list
         && request.resource.data.invoices.size() <= 1000
         && request.resource.data.todos is map
@@ -22,7 +22,8 @@ service cloud.firestore {
         && request.resource.data.todos.tasks is list
         && request.resource.data.todos.questions is list
         && request.resource.data.todos.tasks.size() <= 5000
-        && request.resource.data.todos.questions.size() <= 5000;
+        && request.resource.data.todos.questions.size() <= 5000
+        && request.resource.data.tracker is map;
     }
   }
 }
