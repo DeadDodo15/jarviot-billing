@@ -160,17 +160,31 @@ function finalizeTicker(value) {
 }
 
 /* ───────── TRACKER helpers ───────── */
-const ROUTINES = [
-  { id: "announcements", label: "Corporate Announcements", freq: "daily" },
-  { id: "bulk_deals",    label: "Bulk / Block Deals",      freq: "daily" },
-  { id: "shareholding",  label: "Shareholding Changes",    freq: "daily" },
-  { id: "sector_read",   label: "Sector Reading",          freq: "weekly" },
-  { id: "portfolio_rev", label: "Portfolio Review",        freq: "weekly" },
+const DEFAULT_ROUTINES = [
+  { id: "volume_shockers",       label: "Volume Shockers",         freq: "daily", lagDays: 1 },
+  { id: "price_market_data",     label: "Price and Market Data",   freq: "daily", lagDays: 1 },
+  { id: "corp_announcements",    label: "Corporate Announcements", freq: "daily", lagDays: 1 },
+  { id: "bulk_insider_deals",    label: "Bulk and Insider Deals",  freq: "daily", lagDays: 1 },
+  { id: "expert_calls",          label: "Expert Calls",            freq: "weekly", lagDays: 0 },
+  { id: "magazine",              label: "Magazine",                freq: "weekly", lagDays: 0 },
 ];
+
+function dateShift(baseDate, days) {
+  const d = new Date(baseDate + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
 
 function normalizeTracker(raw) {
   const logs = (raw?.routines?.logs && typeof raw.routines.logs === "object" && !Array.isArray(raw.routines.logs))
     ? raw.routines.logs : {};
+  const catalogRaw = Array.isArray(raw?.routines?.catalog) ? raw.routines.catalog : DEFAULT_ROUTINES;
+  const catalog = catalogRaw.map((r, idx) => ({
+    id: r?.id || `routine_${idx}_${Math.random().toString(36).slice(2, 7)}`,
+    label: r?.label || "Untitled Routine",
+    freq: r?.freq === "weekly" ? "weekly" : "daily",
+    lagDays: Number.isFinite(Number(r?.lagDays)) ? Math.max(0, Number(r.lagDays)) : ((r?.freq === "weekly") ? 0 : 1),
+  }));
   const seasons = Array.isArray(raw?.seasons)
     ? raw.seasons.map(s => ({
         id: s?.id || uid(),
@@ -187,7 +201,7 @@ function normalizeTracker(raw) {
         })) : [],
       }))
     : [];
-  return { routines: { logs }, seasons };
+  return { routines: { logs, catalog }, seasons };
 }
 
 function normalizeData(raw) {
@@ -1073,18 +1087,58 @@ function TodoQuestions({ questions, onSaveQuestion, onSetQuestionStatus, onDelet
 function Tracker({ tracker, onSave }) {
   const today = new Date().toISOString().split("T")[0];
   const logs = tracker.routines.logs;
+  const routines = tracker.routines.catalog;
   const seasons = tracker.seasons;
+  const [selectedLogDate, setSelectedLogDate] = useState(today);
+  const [newRoutineLabel, setNewRoutineLabel] = useState("");
+  const [newRoutineFreq, setNewRoutineFreq] = useState("daily");
+  const [newRoutineLag, setNewRoutineLag] = useState(1);
 
   /* ── helpers ── */
-  const isLoggedToday = (routineId) => (logs[today] || []).includes(routineId);
+  const targetDateFor = (routine) => dateShift(selectedLogDate, -Number(routine.lagDays || 0));
+  const isLoggedForSelected = (routine) => {
+    const targetDate = targetDateFor(routine);
+    return (logs[targetDate] || []).includes(routine.id);
+  };
 
-  const toggleRoutine = (routineId) => {
-    const todayLogs = logs[today] ? [...logs[today]] : [];
-    const next = todayLogs.includes(routineId)
-      ? todayLogs.filter(r => r !== routineId)
-      : [...todayLogs, routineId];
-    const newLogs = { ...logs, [today]: next };
-    onSave({ routines: { logs: newLogs }, seasons });
+  const saveTracker = (nextLogs, nextSeasons = seasons, nextRoutines = routines) => {
+    onSave({ routines: { logs: nextLogs, catalog: nextRoutines }, seasons: nextSeasons });
+  };
+
+  const toggleRoutine = (routine) => {
+    const targetDate = targetDateFor(routine);
+    const dayLogs = logs[targetDate] ? [...logs[targetDate]] : [];
+    const next = dayLogs.includes(routine.id)
+      ? dayLogs.filter(r => r !== routine.id)
+      : [...dayLogs, routine.id];
+    const newLogs = { ...logs, [targetDate]: next };
+    saveTracker(newLogs);
+  };
+
+  const addRoutine = () => {
+    if (!newRoutineLabel.trim()) return;
+    const cleanLag = newRoutineFreq === "daily" ? Math.max(0, Number(newRoutineLag) || 0) : 0;
+    const nextRoutines = [
+      ...routines,
+      {
+        id: `routine_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        label: newRoutineLabel.trim(),
+        freq: newRoutineFreq,
+        lagDays: cleanLag,
+      },
+    ];
+    setNewRoutineLabel("");
+    setNewRoutineFreq("daily");
+    setNewRoutineLag(1);
+    saveTracker(logs, seasons, nextRoutines);
+  };
+
+  const removeRoutine = (routineId) => {
+    const nextRoutines = routines.filter(r => r.id !== routineId);
+    const nextLogs = Object.fromEntries(
+      Object.entries(logs).map(([d, ids]) => [d, (ids || []).filter(id => id !== routineId)])
+    );
+    saveTracker(nextLogs, seasons, nextRoutines);
   };
 
   /* ── heatmap: last 16 weeks = 112 days ── */
@@ -1100,7 +1154,7 @@ function Tracker({ tracker, onSave }) {
 
   const heatmapIntensity = (date) => {
     const done = (logs[date] || []).length;
-    const total = ROUTINES.length;
+    const total = Math.max(1, routines.length);
     if (done === 0) return 0;
     if (done / total <= 0.33) return 1;
     if (done / total <= 0.66) return 2;
@@ -1118,16 +1172,16 @@ function Tracker({ tracker, onSave }) {
     if (!newSeasonName.trim()) return;
     const updated = [...seasons, { id: uid(), name: newSeasonName.trim(), active: true, companies: [] }];
     setNewSeasonName("");
-    onSave({ routines: { logs }, seasons: updated });
+    saveTracker(logs, updated);
   };
 
   const deleteSeason = (id) => {
-    onSave({ routines: { logs }, seasons: seasons.filter(s => s.id !== id) });
+    saveTracker(logs, seasons.filter(s => s.id !== id));
   };
 
   const toggleSeasonActive = (id) => {
     const updated = seasons.map(s => s.id === id ? { ...s, active: !s.active } : s);
-    onSave({ routines: { logs }, seasons: updated });
+    saveTracker(logs, updated);
   };
 
   const addCompany = (seasonId) => {
@@ -1138,7 +1192,7 @@ function Tracker({ tracker, onSave }) {
       return { ...s, companies: [...s.companies, { id: uid(), ticker, resultsRead: false, concallRead: false, deckRead: false, date: today, note: "" }] };
     });
     setTickerInputs(prev => ({ ...prev, [seasonId]: "" }));
-    onSave({ routines: { logs }, seasons: updated });
+    saveTracker(logs, updated);
   };
 
   const updateCompany = (seasonId, compId, patch) => {
@@ -1146,7 +1200,7 @@ function Tracker({ tracker, onSave }) {
       if (s.id !== seasonId) return s;
       return { ...s, companies: s.companies.map(c => c.id === compId ? { ...c, ...patch } : c) };
     });
-    onSave({ routines: { logs }, seasons: updated });
+    saveTracker(logs, updated);
   };
 
   const deleteCompany = (seasonId, compId) => {
@@ -1154,11 +1208,11 @@ function Tracker({ tracker, onSave }) {
       if (s.id !== seasonId) return s;
       return { ...s, companies: s.companies.filter(c => c.id !== compId) };
     });
-    onSave({ routines: { logs }, seasons: updated });
+    saveTracker(logs, updated);
   };
 
   /* ── streak ── */
-  const dailyRoutines = ROUTINES.filter(r => r.freq === "daily");
+  const dailyRoutines = routines.filter(r => r.freq === "daily");
   const calcStreak = () => {
     let streak = 0;
     const d = new Date(today + "T00:00:00");
@@ -1179,30 +1233,60 @@ function Tracker({ tracker, onSave }) {
 
     {/* ── Stats row ── */}
     <div className="cards" style={{gridTemplateColumns:"repeat(3,1fr)",marginBottom:24}}>
-      <div className="card"><div className="card-label">Today's Routines</div><div className="card-val" style={{color:P}}>{(logs[today]||[]).length} / {ROUTINES.length}</div></div>
+      <div className="card"><div className="card-label">Today's Routines</div><div className="card-val" style={{color:P}}>{(logs[today]||[]).length} / {routines.length}</div></div>
       <div className="card"><div className="card-label">Daily Streak</div><div className="card-val" style={{color:streak>0?"#10B981":"#94A3B8"}}>{streak} day{streak!==1?"s":""}</div></div>
       <div className="card"><div className="card-label">Active Seasons</div><div className="card-val" style={{color:"#8B5CF6"}}>{seasons.filter(s=>s.active).length}</div></div>
     </div>
 
+    <div className="card" style={{marginBottom:16}}>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:8}}>Log Date</div>
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <input className="inp" style={{maxWidth:190}} type="date" value={selectedLogDate} onChange={e => setSelectedLogDate(e.target.value || today)} />
+        <span style={{fontSize:12,color:"#64748B"}}>Daily routines with lag 1 will log for {fmtDate(dateShift(selectedLogDate, -1))}.</span>
+      </div>
+    </div>
+
     {/* ── Routines check-in ── */}
     <div className="card" style={{marginBottom:24}}>
-      <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>Today's Routines — {fmtDate(today)}</div>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:10}}>Routine Check-in</div>
+      <div style={{fontSize:12,color:"#64748B",marginBottom:14}}>Selected log date: {fmtDate(selectedLogDate)}</div>
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {ROUTINES.map(r => {
-          const done = isLoggedToday(r.id);
+        {routines.map(r => {
+          const done = isLoggedForSelected(r);
+          const targetDate = targetDateFor(r);
           return (
-            <div key={r.id} onClick={() => toggleRoutine(r.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${done?"#10B981":"#E2E8F0"}`,background:done?"#F0FDF4":"#fff",cursor:"pointer",transition:"all .15s",userSelect:"none"}}>
+            <div key={r.id} onClick={() => toggleRoutine(r)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${done?"#10B981":"#E2E8F0"}`,background:done?"#F0FDF4":"#fff",cursor:"pointer",transition:"all .15s",userSelect:"none"}}>
               <div style={{width:22,height:22,borderRadius:6,background:done?"#10B981":"#E2E8F0",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"background .15s"}}>
                 {done && <span style={{color:"#fff",fontSize:13,fontWeight:700}}>✓</span>}
               </div>
               <div style={{flex:1}}>
                 <div style={{fontWeight:600,fontSize:13,color:done?"#065F46":"#1a1a2e"}}>{r.label}</div>
+                <div style={{fontSize:11,color:"#94A3B8",marginTop:2}}>Logs to: {fmtDate(targetDate)}{Number(r.lagDays||0) > 0 ? ` (T-${Number(r.lagDays)})` : ""}</div>
               </div>
               <span style={{fontSize:11,color:"#94A3B8",textTransform:"uppercase",letterSpacing:".4px"}}>{r.freq}</span>
+              <button className="btn btn-d" style={{padding:"4px 8px",fontSize:11}} onClick={e => { e.stopPropagation(); removeRoutine(r.id); }}>✕</button>
             </div>
           );
         })}
       </div>
+    </div>
+
+    <div className="card" style={{marginBottom:24}}>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>Add Routine</div>
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr auto",gap:8}}>
+        <input className="inp" placeholder="Routine name" value={newRoutineLabel} onChange={e => setNewRoutineLabel(e.target.value)} />
+        <select className="inp" value={newRoutineFreq} onChange={e => {
+          const freq = e.target.value;
+          setNewRoutineFreq(freq);
+          if (freq === "weekly") setNewRoutineLag(0);
+        }}>
+          <option value="daily">daily</option>
+          <option value="weekly">weekly</option>
+        </select>
+        <input className="inp" type="number" min="0" step="1" value={newRoutineLag} onChange={e => setNewRoutineLag(Math.max(0, Number(e.target.value) || 0))} disabled={newRoutineFreq === "weekly"} placeholder="Lag days" />
+        <button className="btn btn-p" onClick={addRoutine}>+ Add</button>
+      </div>
+      <div style={{fontSize:11,color:"#94A3B8",marginTop:8}}>Lag days means when you log on date D, it marks work date D - lag.</div>
     </div>
 
     {/* ── Heatmap ── */}
@@ -1221,7 +1305,7 @@ function Tracker({ tracker, onSave }) {
                 const intensity = heatmapIntensity(d);
                 const count = (logs[d] || []).length;
                 return (
-                  <div key={d} title={`${d}: ${count}/${ROUTINES.length} routines`}
+                  <div key={d} title={`${d}: ${count}/${routines.length} routines`}
                     style={{width:14,height:14,borderRadius:3,background:heatColors[intensity],cursor:"default",transition:"background .15s"}} />
                 );
               })}
