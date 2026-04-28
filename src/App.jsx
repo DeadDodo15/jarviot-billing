@@ -69,6 +69,22 @@ function computeTotals(ci) {
   return ci.reduce((a, i) => ({ amount: a.amount+i.amount, cgst: a.cgst+i.cgst, sgst: a.sgst+i.sgst, total: a.total+i.total }), { amount:0, cgst:0, sgst:0, total:0 });
 }
 
+function invoiceAmounts(inv) {
+  const t = computeTotals(computeItems(inv.items));
+  return { taxable: t.amount, gst: t.cgst + t.sgst, gross: t.total };
+}
+
+function totalsForInvoices(invoices) {
+  return invoices.reduce((acc, inv) => {
+    const a = invoiceAmounts(inv);
+    return {
+      taxable: acc.taxable + a.taxable,
+      gst: acc.gst + a.gst,
+      gross: acc.gross + a.gross,
+    };
+  }, { taxable: 0, gst: 0, gross: 0 });
+}
+
 function emptyItem() { return { id: uid(), description: "", hsn: "", gst: 18, qty: 1, rate: "" }; }
 
 function emptyInvoice(invoices) {
@@ -652,31 +668,53 @@ function Dashboard({ data, goPreview, goEdit, goCreate }) {
   const now = new Date();
   const thisMonth = data.invoices.filter(i => { const d = new Date(i.invoiceDate+"T00:00:00"); return d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear(); });
   const drafts = data.invoices.filter(i => i.status==="draft");
-  const totalThisMonth = thisMonth.reduce((s,i) => s + computeTotals(computeItems(i.items)).total, 0);
   const recurring = data.invoices.filter(i => i.recurring?.active);
+  const monthTotals = totalsForInvoices(thisMonth);
+  const allTotals = totalsForInvoices(data.invoices);
+  const paidTotals = totalsForInvoices(data.invoices.filter(i => i.status === "paid"));
 
   return (<>
     <div className="page-title">Dashboard</div>
     <div className="page-sub">{fmtDate(new Date().toISOString().split("T")[0])}</div>
     <div className="cards">
       <div className="card"><div className="card-label">Total Invoices</div><div className="card-val">{data.invoices.length}</div></div>
-      <div className="card"><div className="card-label">This Month</div><div className="card-val" style={{color:P}}>₹{fmt(totalThisMonth)}</div></div>
+      <div className="card"><div className="card-label">This Month Gross</div><div className="card-val" style={{color:P}}>₹{fmt(monthTotals.gross)}</div></div>
+      <div className="card"><div className="card-label">This Month Taxable</div><div className="card-val" style={{color:"#1E40AF"}}>₹{fmt(monthTotals.taxable)}</div></div>
+      <div className="card"><div className="card-label">This Month GST</div><div className="card-val" style={{color:"#0F766E"}}>₹{fmt(monthTotals.gst)}</div></div>
       <div className="card"><div className="card-label">Drafts</div><div className="card-val" style={{color:"#F59E0B"}}>{drafts.length}</div></div>
       <div className="card"><div className="card-label">Recurring</div><div className="card-val" style={{color:"#8B5CF6"}}>{recurring.length}</div></div>
     </div>
 
+    <div className="card" style={{marginBottom:24}}>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>GST Summary</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3, minmax(170px, 1fr))",gap:12}}>
+        <div style={{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:8,padding:12}}>
+          <div style={{fontSize:11,color:"#94A3B8",fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>This Month</div>
+          <div style={{fontSize:12,color:"#334155",lineHeight:1.7}}>Taxable: <b>₹{fmt(monthTotals.taxable)}</b><br/>GST: <b>₹{fmt(monthTotals.gst)}</b><br/>Gross: <b>₹{fmt(monthTotals.gross)}</b></div>
+        </div>
+        <div style={{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:8,padding:12}}>
+          <div style={{fontSize:11,color:"#94A3B8",fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>All Time</div>
+          <div style={{fontSize:12,color:"#334155",lineHeight:1.7}}>Taxable: <b>₹{fmt(allTotals.taxable)}</b><br/>GST: <b>₹{fmt(allTotals.gst)}</b><br/>Gross: <b>₹{fmt(allTotals.gross)}</b></div>
+        </div>
+        <div style={{background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:8,padding:12}}>
+          <div style={{fontSize:11,color:"#94A3B8",fontWeight:700,textTransform:"uppercase",letterSpacing:".4px",marginBottom:6}}>Paid Invoices</div>
+          <div style={{fontSize:12,color:"#334155",lineHeight:1.7}}>Taxable: <b>₹{fmt(paidTotals.taxable)}</b><br/>GST: <b>₹{fmt(paidTotals.gst)}</b><br/>Gross: <b>₹{fmt(paidTotals.gross)}</b></div>
+        </div>
+      </div>
+    </div>
+
     {drafts.length > 0 && <>
       <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Pending Drafts</div>
-      <div className="tbl-wrap" style={{marginBottom:24}}><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th style={{textAlign:"right"}}>Amount</th><th>Actions</th></tr></thead>
-      <tbody>{drafts.map(i => { const tot = computeTotals(computeItems(i.items)).total; return <tr key={i.id}><td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td style={{textAlign:"right"}}>₹{fmt(tot)}</td><td><button className="btn btn-s" style={{marginRight:6}} onClick={() => goEdit(i)}>Edit</button><button className="btn btn-o" onClick={() => goPreview(i)}>View</button></td></tr>; })}</tbody></table></div>
+      <div className="tbl-wrap" style={{marginBottom:24}}><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th style={{textAlign:"right"}}>Taxable</th><th style={{textAlign:"right"}}>GST</th><th style={{textAlign:"right"}}>Gross</th><th>Actions</th></tr></thead>
+      <tbody>{drafts.map(i => { const a = invoiceAmounts(i); return <tr key={i.id}><td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td style={{textAlign:"right"}}>₹{fmt(a.taxable)}</td><td style={{textAlign:"right"}}>₹{fmt(a.gst)}</td><td style={{textAlign:"right"}}>₹{fmt(a.gross)}</td><td><button className="btn btn-s" style={{marginRight:6}} onClick={() => goEdit(i)}>Edit</button><button className="btn btn-o" onClick={() => goPreview(i)}>View</button></td></tr>; })}</tbody></table></div>
     </>}
 
     {data.invoices.length === 0 && <div style={{textAlign:"center",padding:"60px 0",color:"#94A3B8"}}><div style={{fontSize:48,marginBottom:12}}>📄</div><div style={{fontSize:15,fontWeight:600,marginBottom:8}}>No invoices yet</div><button className="btn btn-p" onClick={goCreate}>Create your first invoice</button></div>}
 
     {data.invoices.length > 0 && <>
       <div style={{fontSize:15,fontWeight:700,marginBottom:12}}>Recent Invoices</div>
-      <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th style={{textAlign:"right"}}>Total</th><th>Status</th><th></th></tr></thead>
-      <tbody>{[...data.invoices].sort((a,b) => b.invoiceDate.localeCompare(a.invoiceDate)).slice(0,5).map(i => { const tot = computeTotals(computeItems(i.items)).total; return <tr key={i.id}><td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td style={{textAlign:"right"}}>₹{fmt(tot)}</td><td><span className={`badge badge-${i.status}`}>{i.status}</span>{i.recurring?.active && <span className="badge badge-recurring" style={{marginLeft:6}}>↻</span>}</td><td><button className="btn btn-o" onClick={() => goPreview(i)}>View</button></td></tr>; })}</tbody></table></div>
+      <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th style={{textAlign:"right"}}>Taxable</th><th style={{textAlign:"right"}}>GST</th><th style={{textAlign:"right"}}>Gross</th><th>Status</th><th></th></tr></thead>
+      <tbody>{[...data.invoices].sort((a,b) => b.invoiceDate.localeCompare(a.invoiceDate)).slice(0,5).map(i => { const a = invoiceAmounts(i); return <tr key={i.id}><td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td style={{textAlign:"right"}}>₹{fmt(a.taxable)}</td><td style={{textAlign:"right"}}>₹{fmt(a.gst)}</td><td style={{textAlign:"right"}}>₹{fmt(a.gross)}</td><td><span className={`badge badge-${i.status}`}>{i.status}</span>{i.recurring?.active && <span className="badge badge-recurring" style={{marginLeft:6}}>↻</span>}</td><td><button className="btn btn-o" onClick={() => goPreview(i)}>View</button></td></tr>; })}</tbody></table></div>
     </>}
   </>);
 }
@@ -708,10 +746,10 @@ function InvList({ data, goPreview, goEdit, markPaid, deleteInvoice }) {
         <input className="inp" placeholder="Search invoices..." value={search} onChange={e => setSearch(e.target.value)} style={{paddingLeft:30}} />
       </div>
     </div>
-    <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th>Due Date</th><th style={{textAlign:"right"}}>Total</th><th>Status</th><th>Actions</th></tr></thead>
-    <tbody>{filtered.length === 0 ? <tr><td colSpan={6} style={{textAlign:"center",padding:40,color:"#94A3B8"}}>{search ? "No invoices match your search" : "No invoices found"}</td></tr> :
-      filtered.map(i => { const tot = computeTotals(computeItems(i.items)).total; return <tr key={i.id}>
-        <td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td>{fmtDate(i.dueDate)}</td><td style={{textAlign:"right",fontWeight:600}}>₹{fmt(tot)}</td>
+    <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Invoice No</th><th>Date</th><th>Due Date</th><th style={{textAlign:"right"}}>Taxable</th><th style={{textAlign:"right"}}>GST</th><th style={{textAlign:"right"}}>Gross</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>{filtered.length === 0 ? <tr><td colSpan={8} style={{textAlign:"center",padding:40,color:"#94A3B8"}}>{search ? "No invoices match your search" : "No invoices found"}</td></tr> :
+      filtered.map(i => { const a = invoiceAmounts(i); return <tr key={i.id}>
+        <td style={{fontWeight:600}}>{i.invoiceNo}</td><td>{fmtDate(i.invoiceDate)}</td><td>{fmtDate(i.dueDate)}</td><td style={{textAlign:"right",fontWeight:600}}>₹{fmt(a.taxable)}</td><td style={{textAlign:"right",fontWeight:600}}>₹{fmt(a.gst)}</td><td style={{textAlign:"right",fontWeight:700}}>₹{fmt(a.gross)}</td>
         <td><span className={`badge badge-${i.status}`}>{i.status}</span>{i.recurring?.active && <span className="badge badge-recurring" style={{marginLeft:6}}>↻</span>}</td>
         <td style={{whiteSpace:"nowrap"}}><button className="btn btn-o" style={{marginRight:6}} onClick={() => goPreview(i)}>View</button><button className="btn btn-s" style={{marginRight:6}} onClick={() => goEdit(i)}>Edit</button>{i.status==="finalized" && <button className="btn btn-g" style={{fontSize:12,padding:"5px 10px",marginRight:6}} onClick={() => markPaid(i.id)}>Paid</button>}<button className="btn btn-d" onClick={() => { if(confirm("Delete this invoice?")) deleteInvoice(i.id); }}>✕</button></td>
       </tr>; })}</tbody></table></div>
@@ -730,7 +768,7 @@ function FolderView({ data, goPreview }) {
     {years.length === 0 && <div style={{color:"#94A3B8",textAlign:"center",padding:60}}>No invoices yet</div>}
     {years.map(y => <div key={y}><div className="folder-year">📁 {y}</div>
       {MONTHS.filter(m => grouped[y]?.[m]).map(m => <div key={m}><div className="folder-month">📂 {m}</div>
-        {grouped[y][m].sort((a,b) => a.invoiceNo.localeCompare(b.invoiceNo)).map(i => { const tot = computeTotals(computeItems(i.items)).total; return <div key={i.id} className="folder-inv" onClick={() => goPreview(i)}><div><span style={{fontWeight:600}}>{i.invoiceNo}</span><span className={`badge badge-${i.status}`} style={{marginLeft:10}}>{i.status}</span></div><div style={{fontWeight:600,color:P}}>₹{fmt(tot)}</div></div>; })}
+        {grouped[y][m].sort((a,b) => a.invoiceNo.localeCompare(b.invoiceNo)).map(i => { const a = invoiceAmounts(i); return <div key={i.id} className="folder-inv" onClick={() => goPreview(i)}><div><span style={{fontWeight:600}}>{i.invoiceNo}</span><span className={`badge badge-${i.status}`} style={{marginLeft:10}}>{i.status}</span></div><div style={{fontSize:12,textAlign:"right",lineHeight:1.4}}><div style={{color:"#64748B"}}>Taxable ₹{fmt(a.taxable)}</div><div style={{color:"#0F766E"}}>GST ₹{fmt(a.gst)}</div><div style={{fontWeight:700,color:P}}>Gross ₹{fmt(a.gross)}</div></div></div>; })}
       </div>)}</div>)}
   </>);
 }
@@ -743,8 +781,8 @@ function RecurringView({ data, goPreview, goEdit }) {
   return (<>
     <div className="page-title">Recurring Invoices</div><div className="page-sub">Templates that auto-generate invoices on schedule</div>
     {rec.length === 0 && <div style={{color:"#94A3B8",textAlign:"center",padding:60}}>No recurring invoices. Toggle recurrence when creating or editing an invoice.</div>}
-    <div style={{display:"grid",gap:12}}>{rec.map(i => { const tot = computeTotals(computeItems(i.items)).total; return <div key={i.id} className="card" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <div><div style={{fontWeight:700,marginBottom:4}}>{i.invoiceNo} <span className="badge badge-recurring" style={{marginLeft:6}}>↻ {FREQ[i.recurring.frequency]}</span></div><div style={{fontSize:12,color:"#94A3B8"}}>Next: {fmtDate(i.recurring.nextDate)} · ₹{fmt(tot)}</div></div>
+    <div style={{display:"grid",gap:12}}>{rec.map(i => { const a = invoiceAmounts(i); return <div key={i.id} className="card" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <div><div style={{fontWeight:700,marginBottom:4}}>{i.invoiceNo} <span className="badge badge-recurring" style={{marginLeft:6}}>↻ {FREQ[i.recurring.frequency]}</span></div><div style={{fontSize:12,color:"#94A3B8"}}>Next: {fmtDate(i.recurring.nextDate)} · Taxable ₹{fmt(a.taxable)} · GST ₹{fmt(a.gst)} · Gross ₹{fmt(a.gross)}</div></div>
       <div style={{display:"flex",gap:8}}><button className="btn btn-o" onClick={() => goPreview(i)}>View</button><button className="btn btn-s" onClick={() => goEdit(i)}>Edit</button></div>
     </div>; })}</div>
   </>);
